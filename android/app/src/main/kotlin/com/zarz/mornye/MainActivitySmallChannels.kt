@@ -44,7 +44,7 @@ internal fun MainActivity.registerAudioOutputChannel(messenger: BinaryMessenger)
             } else {
                 try {
                     val shown = if (Build.VERSION.SDK_INT >= 34) {
-                        android.media.MediaRouter2.getInstance(this).showSystemOutputSwitcher()
+                        AudioOutputSwitcher.show(this)
                     } else {
                         // Older Android releases do not expose a public output picker.
                         startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))

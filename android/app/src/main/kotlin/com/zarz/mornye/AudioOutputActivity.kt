@@ -2,7 +2,6 @@ package com.zarz.mornye
 
 import android.app.Activity
 import android.content.Intent
-import android.media.MediaRouter2
 import android.os.Build
 import android.provider.Settings
 
@@ -26,7 +25,7 @@ class AudioOutputActivity : Activity() {
         opened = true
         try {
             if (Build.VERSION.SDK_INT >= 34 &&
-                MediaRouter2.getInstance(this).showSystemOutputSwitcher()) {
+                AudioOutputSwitcher.show(this)) {
                 return
             }
             // Public output-switcher API is unavailable on older Android.

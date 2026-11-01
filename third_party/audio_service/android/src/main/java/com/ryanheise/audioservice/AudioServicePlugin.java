@@ -228,6 +228,34 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
         return audioHandlerInterface;
     }
 
+    /**
+     * Returns the framework session token wrapped by audio_service when one
+     * is available. Android 16.1 uses it to associate the output switcher
+     * with the correct playback session.
+     */
+    public static android.media.session.MediaSession.Token toPlatformMediaSessionToken(
+            MediaSessionCompat.Token compatToken) {
+        if (compatToken == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            return null;
+        }
+        Object platformToken = compatToken.getToken();
+        if (platformToken instanceof android.media.session.MediaSession.Token) {
+            return (android.media.session.MediaSession.Token) platformToken;
+        }
+        return null;
+    }
+
+    /**
+     * Returns the active audio-service session token, or null until the
+     * media browser has connected to the audio service.
+     */
+    public static android.media.session.MediaSession.Token getPlatformMediaSessionToken() {
+        MediaControllerCompat controller = mediaController;
+        return controller == null
+                ? null
+                : toPlatformMediaSessionToken(controller.getSessionToken());
+    }
+
     private static MediaBrowserCompat mediaBrowser;
     private static MediaControllerCompat mediaController;
     private static final MediaControllerCompat.Callback controllerCallback = new MediaControllerCompat.Callback() {
