@@ -50,9 +50,7 @@ class SafScanChildrenTest {
     @Test
     fun pickerPersistsAndVerifiesReadWriteGrant() {
         resetPickerGrant(persistable = true)
-        val returnedFlags = grantFlags or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-
-        assertTrue(persistSafTreeGrant(context.contentResolver, treeUri, returnedFlags))
+        assertTrue(persistSafTreeGrant(context.contentResolver, treeUri, grantFlags))
         assertTrue(context.contentResolver.persistedUriPermissions.any {
             it.uri == treeUri && it.isReadPermission && it.isWritePermission
         })
@@ -69,8 +67,7 @@ class SafScanChildrenTest {
     @Test
     fun pickerRejectsReturnedGrantWithoutWritePermission() {
         resetPickerGrant(persistable = true)
-        val returnedFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
-            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        val returnedFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION
 
         assertFalse(persistSafTreeGrant(context.contentResolver, treeUri, returnedFlags))
         assertFalse(context.contentResolver.persistedUriPermissions.any { it.uri == treeUri })

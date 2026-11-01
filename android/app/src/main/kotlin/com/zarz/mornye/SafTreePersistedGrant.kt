@@ -17,8 +17,7 @@ internal fun persistSafTreeGrant(
 ): Boolean {
     val requiredAccess = Intent.FLAG_GRANT_READ_URI_PERMISSION or
         Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-    val requiredResultFlags = requiredAccess or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-    if (returnedFlags and requiredResultFlags != requiredResultFlags) {
+    if ((returnedFlags and requiredAccess) != requiredAccess) {
         return false
     }
 
