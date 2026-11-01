@@ -38,6 +38,44 @@ class SafScanChildrenTest {
         return requireNotNull(DocumentFile.fromTreeUri(context, treeUri))
     }
 
+    private fun resetPickerGrant(persistable: Boolean) {
+        context.contentResolver.call(controlUri, "lookup.reset", null, Bundle().apply {
+            putInt("count", 0)
+            putString("mode", "normal")
+            putBoolean("persistable", persistable)
+            putString("targetPackage", context.packageName)
+        })
+    }
+
+    @Test
+    fun pickerPersistsAndVerifiesReadWriteGrant() {
+        resetPickerGrant(persistable = true)
+        val returnedFlags = grantFlags or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+
+        assertTrue(persistSafTreeGrant(context.contentResolver, treeUri, returnedFlags))
+        assertTrue(context.contentResolver.persistedUriPermissions.any {
+            it.uri == treeUri && it.isReadPermission && it.isWritePermission
+        })
+    }
+
+    @Test
+    fun pickerRejectsProviderGrantThatCannotBePersisted() {
+        resetPickerGrant(persistable = false)
+
+        assertFalse(persistSafTreeGrant(context.contentResolver, treeUri, grantFlags))
+        assertFalse(context.contentResolver.persistedUriPermissions.any { it.uri == treeUri })
+    }
+
+    @Test
+    fun pickerRejectsReturnedGrantWithoutWritePermission() {
+        resetPickerGrant(persistable = true)
+        val returnedFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+
+        assertFalse(persistSafTreeGrant(context.contentResolver, treeUri, returnedFlags))
+        assertFalse(context.contentResolver.persistedUriPermissions.any { it.uri == treeUri })
+    }
+
     private fun stats() = requireNotNull(context.contentResolver.call(controlUri, "lookup.stats", null, null))
 
     @After

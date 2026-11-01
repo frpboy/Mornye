@@ -48,7 +48,11 @@ internal fun MainActivity.handleSafTreeResult(activityResult: ActivityResult) {
     val result = MainActivity.pendingSafTreeResult
     MainActivity.pendingSafTreeResult = null
 
-    fun deliver(payload: String?) {
+    fun deliver(
+        payload: String?,
+        errorCode: String? = null,
+        errorMessage: String? = null,
+    ) {
         // Android can return to a new process with no Dart method reply.
         // Persist the grant/result anyway, then notify the restored setup.
         try {
@@ -60,7 +64,11 @@ internal fun MainActivity.handleSafTreeResult(activityResult: ActivityResult) {
             result?.error("saf_save_failed", "Could not save selected folder", null)
             return
         }
-        result?.success(payload)
+        if (errorCode != null) {
+            result?.error(errorCode, errorMessage, null)
+        } else {
+            result?.success(payload)
+        }
     }
 
     if (activityResult.resultCode != Activity.RESULT_OK) {
@@ -75,11 +83,13 @@ internal fun MainActivity.handleSafTreeResult(activityResult: ActivityResult) {
         return
     }
 
-    val takeFlags = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-    try {
-        contentResolver.takePersistableUriPermission(uri, takeFlags)
-    } catch (e: Exception) {
-        android.util.Log.w("Mornye", "Failed to persist SAF permission: ${e.message}")
+    if (!persistSafTreeGrant(contentResolver, uri, data.flags)) {
+        deliver(
+            null,
+            "saf_persist_failed",
+            "The selected folder did not grant persistent read and write access. Choose a folder from a provider that supports persistent access.",
+        )
+        return
     }
 
     val payload = JSONObject()
