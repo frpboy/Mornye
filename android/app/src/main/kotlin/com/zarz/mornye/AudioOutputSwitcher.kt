@@ -21,15 +21,21 @@ internal object AudioOutputSwitcher {
                 0
             }
 
-        return if (
-            shouldUseSessionBoundOutputSwitcher(
+        if (
+            !shouldUseSessionBoundOutputSwitcher(
                 apiLevel = Build.VERSION.SDK_INT,
                 baklavaExtensionVersion = extensionVersion,
                 hasPlatformSessionToken = sessionToken != null,
             )
         ) {
+            return router.showSystemOutputSwitcher()
+        }
+
+        return try {
             router.showSystemOutputSwitcher(checkNotNull(sessionToken))
-        } else {
+        } catch (_: IllegalArgumentException) {
+            // A stale token can outlive a service reconnect. Preserve the
+            // picker on that device by falling back to the platform selector.
             router.showSystemOutputSwitcher()
         }
     }
