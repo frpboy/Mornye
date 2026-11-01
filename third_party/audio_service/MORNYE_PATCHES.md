@@ -72,6 +72,17 @@ from the upstream package are not vendored.
   notification and the lock screen keep the original artwork. A null
   answer, a resolver that throws, or no resolver keeps the description as
   it was.
+- Android: expose the framework `MediaSession.Token` from the active
+  `MediaControllerCompat` in `AudioServicePlugin`. Android 16.1 adds a
+  session-specific `MediaRouter2.showSystemOutputSwitcher` overload; the app
+  needs the underlying framework token rather than the compat wrapper.
+  `getPlatformMediaSessionToken` returns null until the browser connection is
+  ready, and conversion returns null when no platform token is available.
+  The app's `AudioOutputSwitcher` uses the session-aware overload only when
+  B Extensions v1 is present, otherwise retaining the API 34 no-argument
+  picker. A stale session token falls back to the no-argument picker.
+  `AudioOutputSessionTokenTest` covers the compat-to-framework conversion.
+
 - Android: bound the decoded notification art. Upstream keeps every decoded
   cover in an `LruCache` of one eighth of the Java heap (16 to 64 MB) that
   only `onDestroy` empties. `AudioService` now keeps the current cover and
