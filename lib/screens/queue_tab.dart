@@ -36,6 +36,7 @@ import 'package:mornye/widgets/create_playlist_sheet.dart';
 import 'package:mornye/widgets/tool_button_group.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:material_3_expressive/material_3_expressive.dart'
     show
@@ -206,6 +207,27 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   String? _filterFormat;
   String? _filterMetadata;
   String _sortMode = 'latest';
+  bool _sortModeChangedByUser = false;
+
+  static const _persistableLibrarySortModes = {
+    'latest',
+    'oldest',
+    'size-desc',
+    'size-asc',
+    'a-z',
+    'z-a',
+    'artist-asc',
+    'artist-desc',
+    'album-asc',
+    'album-desc',
+    'release-newest',
+    'release-oldest',
+    'genre-asc',
+    'genre-desc',
+  };
+
+  String get _librarySortPreferenceKey =>
+      'library_sort_mode_${widget.librarySection ?? 'all'}';
   String _libraryQualityLabelMode = AppSettings.libraryQualityLabelBitDepthOnly;
   final _libraryGridExtent = ValueNotifier(_libraryGridDefaultExtent);
   double? _libraryGridPinchStartExtent;
@@ -284,6 +306,33 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     _completionBridgePlayableProbe = CompletionBridgePlayableProbeCache(
       onPlayable: _fileExistsCache.markExists,
     );
+    unawaited(_restoreLibrarySortMode());
+  }
+
+  Future<void> _restoreLibrarySortMode() async {
+    final preferences = await SharedPreferences.getInstance();
+    final savedMode = preferences.getString(_librarySortPreferenceKey);
+    if (!mounted ||
+        _sortModeChangedByUser ||
+        savedMode == null ||
+        !_persistableLibrarySortModes.contains(savedMode) ||
+        (widget.librarySection == 'playlists' && savedMode.startsWith('size-'))) {
+      return;
+    }
+    if (savedMode == _sortMode) return;
+    setState(() {
+      _sortMode = savedMode;
+      _resetLibraryPaging();
+    });
+  }
+
+  Future<void> _saveLibrarySortMode(String mode) async {
+    if (!_persistableLibrarySortModes.contains(mode) ||
+        (widget.librarySection == 'playlists' && mode.startsWith('size-'))) {
+      return;
+    }
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_librarySortPreferenceKey, mode);
   }
 
   void _initializePageController() {
