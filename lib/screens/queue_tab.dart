@@ -281,6 +281,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   @override
   void initState() {
     super.initState();
+    _sortMode = ref.read(settingsProvider).historySortMode;
     _completionBridgePlayableProbe = CompletionBridgePlayableProbeCache(
       onPlayable: _fileExistsCache.markExists,
     );
@@ -420,6 +421,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     if (widget.librarySection != null) return;
     if (_modeForPage(index) == 'playlists' && _sortMode.startsWith('size-')) {
       setState(() => _sortMode = 'latest');
+      ref.read(settingsProvider.notifier).setHistorySortMode('latest');
     }
     HapticFeedback.selectionClick();
     ref
@@ -512,6 +514,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
       _sortMode = 'latest';
       _resetLibraryPaging();
     });
+    ref.read(settingsProvider.notifier).setHistorySortMode('latest');
   }
 
   @override
@@ -528,6 +531,16 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     _applyDefaultLibraryViewOnTabVisible();
     final localLibraryEnabled = ref.watch(
       settingsProvider.select((s) => s.localLibraryEnabled),
+    );
+    ref.listen<String>(
+      settingsProvider.select((s) => s.historySortMode),
+      (previous, next) {
+        if (next == _sortMode) return;
+        setState(() {
+          _sortMode = next;
+          _resetLibraryPaging();
+        });
+      },
     );
 
     ref.listen(downloadQueueLookupProvider, (previous, next) {
