@@ -319,4 +319,66 @@ void main() {
     expect(entries, hasLength(2));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('artwork previews the adjacent track and slides with the title', (
+    tester,
+  ) async {
+    var index = 0;
+    final selected = <int>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) => Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 240,
+                height: 240,
+                child: PlayerTrackSwipe(
+                  queue: queue,
+                  currentIndex: index,
+                  onSelected: (item) async {
+                    final nextIndex = queue.indexOf(item);
+                    selected.add(nextIndex);
+                    setState(() => index = nextIndex);
+                  },
+                  child: PlayerTrackSwipeArtwork(
+                    current: queue[index],
+                    builder: (item) => ColoredBox(
+                      key: ValueKey('artwork-${item.id}'),
+                      color: Colors.green,
+                    ),
+                    child: ColoredBox(
+                      key: const ValueKey('current-artwork'),
+                      color: Colors.blue,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final current = find.byKey(const ValueKey('current-artwork'));
+    final initialRect = tester.getRect(current);
+    final gesture = await tester.startGesture(initialRect.center);
+    await gesture.moveBy(const Offset(-90, 0));
+    await tester.pump();
+
+    expect(tester.getRect(current).left, lessThan(initialRect.left));
+    expect(find.byKey(const ValueKey('artwork-1')), findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('artwork-1'))).left,
+      greaterThan(tester.getRect(current).left),
+    );
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(selected, [1]);
+    expect(find.byKey(const ValueKey('current-artwork')), findsOneWidget);
+    expect(tester.getRect(find.byKey(const ValueKey('current-artwork'))), initialRect);
+    expect(tester.takeException(), isNull);
+  });
+
 }
