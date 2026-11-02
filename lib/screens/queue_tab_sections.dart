@@ -202,10 +202,12 @@ extension _QueueTabSections on _QueueTabState {
 
   void _setSortMode(String mode) {
     if (mode == _sortMode || !mounted) return;
+    _sortModeChangedByUser = true;
     _setState(() {
       _sortMode = mode;
       _resetLibraryPaging();
     });
+    unawaited(_saveLibrarySortMode(mode));
   }
 
   /// The sort modes as a checked menu below the sort button, on desktop.
