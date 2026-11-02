@@ -3,8 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-/// Shares one horizontal gesture between artwork and metadata. Only the
-/// titles translate; artwork, menus and the rest of the player stay anchored.
+/// Shares one horizontal gesture between the artwork and track metadata.
+/// Both surfaces preview the adjacent queue item before playback is committed.
 class PlayerTrackSwipe extends StatefulWidget {
   const PlayerTrackSwipe({
     super.key,
@@ -211,6 +211,77 @@ class PlayerTrackSwipeTitles extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+
+/// Slides the artwork with the track metadata while a queue swipe is in
+/// progress. The neighbor is built lazily and is not interactive or announced
+/// to accessibility services until it becomes the current track.
+class PlayerTrackSwipeArtwork extends StatelessWidget {
+  const PlayerTrackSwipeArtwork({
+    super.key,
+    required this.current,
+    required this.builder,
+    required this.child,
+  });
+
+  final MediaItem current;
+  final Widget Function(MediaItem item) builder;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context
+        .dependOnInheritedWidgetOfExactType<_SwipeScope>()
+        ?.state;
+    if (state == null) return child;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        if (width.isFinite && width > 0) state._width = width;
+        MediaItem? cachedNeighbor;
+        double? cachedDirection;
+        Widget? neighborArtwork;
+        return ClipRect(
+          child: AnimatedBuilder(
+            animation: state._offset,
+            child: child,
+            builder: (context, currentArtwork) {
+              final offset = state._offset.value;
+              final next = state._neighbor(offset);
+              if (offset != 0 && next != null) {
+                if (!identical(next, cachedNeighbor) ||
+                    offset.sign != cachedDirection) {
+                  cachedNeighbor = next;
+                  cachedDirection = offset.sign;
+                  neighborArtwork = builder(next);
+                }
+              }
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Transform.translate(
+                    offset: Offset(offset, 0),
+                    child: currentArtwork,
+                  ),
+                  if (offset != 0 && next != null)
+                    Positioned(
+                      left: offset - state._pageExtent * offset.sign,
+                      top: 0,
+                      bottom: 0,
+                      width: width,
+                      child: ExcludeSemantics(
+                        child: IgnorePointer(child: neighborArtwork),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
