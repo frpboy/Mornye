@@ -150,11 +150,9 @@ class PlayerTrackSwipeRegion extends StatelessWidget {
 class PlayerTrackSwipeTitles extends StatelessWidget {
   const PlayerTrackSwipeTitles({
     super.key,
-    required this.current,
     required this.builder,
   });
 
-  final MediaItem current;
   final Widget Function(MediaItem item) builder;
 
   @override
@@ -239,8 +237,10 @@ class PlayerTrackSwipeArtwork extends StatelessWidget {
     if (state == null) return child;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        if (width.isFinite && width > 0) state._width = width;
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : state._width;
+        if (width > 0) state._width = width;
         MediaItem? cachedNeighbor;
         double? cachedDirection;
         Widget? neighborArtwork;
