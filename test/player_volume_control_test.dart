@@ -277,12 +277,14 @@ void main() {
         ProviderScope(
           overrides: [
             systemVolumeProvider.overrideWith((ref) => volumes.stream),
-            systemVolumeWriterProvider.overrideWith((ref) => (value) {
-              writes.add(value);
-              final completion = Completer<void>();
-              completions.add(completion);
-              return completion.future;
-            }),
+            systemVolumeWriterProvider.overrideWith(
+              (ref) => (value) {
+                writes.add(value);
+                final completion = Completer<void>();
+                completions.add(completion);
+                return completion.future;
+              },
+            ),
           ],
           child: MaterialApp(
             localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -328,5 +330,4 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
-
 }
