@@ -123,6 +123,22 @@ class SettingsNotifier extends Notifier<AppSettings> {
     'playlists',
     'folders',
   };
+  static const Set<String> _historySortModeValues = {
+    'latest',
+    'oldest',
+    'size-desc',
+    'size-asc',
+    'a-z',
+    'z-a',
+    'artist-asc',
+    'artist-desc',
+    'album-asc',
+    'album-desc',
+    'release-newest',
+    'release-oldest',
+    'genre-asc',
+    'genre-desc',
+  };
   static const Set<String> _extensionVerificationBrowserModeValues = {
     'external_first',
     'in_app_first',
@@ -207,6 +223,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
           defaultLibraryView: _normalizeDefaultLibraryView(
             loaded.defaultLibraryView,
           ),
+          historySortMode: _normalizeHistorySortMode(loaded.historySortMode),
           libraryQualityLabelMode: normalizeLibraryQualityLabelMode(
             loaded.libraryQualityLabelMode,
           ),
@@ -496,6 +513,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     final normalized = value.trim().toLowerCase();
     if (_libraryViewValues.contains(normalized)) return normalized;
     return 'last';
+  }
+
+  String _normalizeHistorySortMode(String value) {
+    final normalized = value.trim().toLowerCase();
+    return _historySortModeValues.contains(normalized) ? normalized : 'latest';
   }
 
   String _normalizeExtensionVerificationBrowserMode(String value) {
@@ -913,6 +935,10 @@ class SettingsNotifier extends Notifier<AppSettings> {
 
   void setHistoryViewMode(String mode) =>
       _commit(state.copyWith(historyViewMode: mode));
+
+  void setHistorySortMode(String mode) => _commit(
+    state.copyWith(historySortMode: _normalizeHistorySortMode(mode)),
+  );
 
   void setHistoryFilterMode(String mode) =>
       _commit(state.copyWith(historyFilterMode: mode));
