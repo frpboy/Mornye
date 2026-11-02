@@ -83,6 +83,24 @@ void main() {
     },
   );
 
+  test('library sort preference is written to app settings', () async {
+    final preferences = _Preferences();
+    final container = ProviderContainer(
+      overrides: [
+        settingsProvider.overrideWith(() => _Settings(preferences)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(settingsProvider.notifier);
+
+    notifier.setHistorySortMode('artist-asc');
+    await preferences.whenStarted(0);
+
+    expect(container.read(settingsProvider).historySortMode, 'artist-asc');
+    expect(preferences.writes.single['historySortMode'], 'artist-asc');
+    preferences.release(0).complete(true);
+  });
+
   test(
     'setup completes only after folder and completion flag are durable',
     () async {
