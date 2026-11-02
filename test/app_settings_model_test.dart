@@ -56,6 +56,7 @@ void main() {
       expect(settings.autoConvertBitrate, '320k');
       expect(settings.autoConvertMaxBitDepth, 16);
       expect(settings.autoConvertMaxSampleRate, 48000);
+      expect(settings.historySortMode, 'latest');
       expect(
         settings.libraryQualityLabelMode,
         AppSettings.libraryQualityLabelBitDepthOnly,
@@ -94,6 +95,7 @@ void main() {
         deduplicateDownloads: false,
         allowQualityVariants: true,
         libraryQualityLabelMode: AppSettings.libraryQualityLabelBitDepthOnly,
+        historySortMode: 'artist-asc',
         clearDownloadFallbackExtensionIds: true,
         clearSearchProvider: true,
         clearHomeFeedProvider: true,
@@ -110,6 +112,7 @@ void main() {
         updated.libraryQualityLabelMode,
         AppSettings.libraryQualityLabelBitDepthOnly,
       );
+      expect(updated.historySortMode, 'artist-asc');
       expect(updated.downloadFallbackExtensionIds, isNull);
       expect(updated.searchProvider, isNull);
       expect(updated.homeFeedProvider, isNull);
@@ -142,6 +145,7 @@ void main() {
         autoConvertMaxBitDepth: 24,
         autoConvertMaxSampleRate: 96000,
         libraryQualityLabelMode: AppSettings.libraryQualityLabelBitDepthOnly,
+        historySortMode: 'release-oldest',
         embeddedCoverMaxDimension: 1500,
       );
 
@@ -166,6 +170,7 @@ void main() {
         decoded.libraryQualityLabelMode,
         AppSettings.libraryQualityLabelBitDepthOnly,
       );
+      expect(decoded.historySortMode, 'release-oldest');
       expect(decoded.deduplicateDownloads, isFalse);
       expect(decoded.allowQualityVariants, isTrue);
       expect(decoded.nativeDownloadWorkerEnabled, isTrue);
