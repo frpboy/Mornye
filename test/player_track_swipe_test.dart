@@ -45,8 +45,7 @@ void main() {
                                 ),
                               ),
                               PlayerTrackSwipeTitles(
-                                current: queue[index],
-                                builder: (item) => Column(
+                                              builder: (item) => Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(item.title),
@@ -348,7 +347,7 @@ void main() {
                       color: Colors.green,
                     ),
                     child: ColoredBox(
-                      key: const ValueKey('current-artwork'),
+                      key: ValueKey('current-artwork-${queue[index].id}'),
                       color: Colors.blue,
                     ),
                   ),
@@ -360,7 +359,7 @@ void main() {
       ),
     );
 
-    final current = find.byKey(const ValueKey('current-artwork'));
+    final current = find.byKey(const ValueKey('current-artwork-0'));
     final initialRect = tester.getRect(current);
     final gesture = await tester.startGesture(initialRect.center);
     await gesture.moveBy(const Offset(-90, 0));
@@ -376,8 +375,9 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
     expect(selected, [1]);
-    expect(find.byKey(const ValueKey('current-artwork')), findsOneWidget);
-    expect(tester.getRect(find.byKey(const ValueKey('current-artwork'))), initialRect);
+    final nextArtwork = find.byKey(const ValueKey('current-artwork-1'));
+    expect(nextArtwork, findsOneWidget);
+    expect(tester.getRect(nextArtwork), initialRect);
     expect(tester.takeException(), isNull);
   });
 
