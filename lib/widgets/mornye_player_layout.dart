@@ -261,10 +261,20 @@ class MornyePlayerLayout extends ConsumerWidget {
                   // Both layers share the header's progress, so reversing a
                   // transition reuses the live cover instead of inserting a
                   // duplicate while its previous instance is still fading.
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      for (final expanded in [true, false])
+                  child: PlayerTrackSwipeArtwork(
+                    current: mediaItem,
+                    builder: (item) => ClipRRect(
+                      borderRadius: BorderRadius.circular(fullBleed ? 0 : 12),
+                      child: PlayerArtwork(
+                        artUri: item.artUri?.toString(),
+                        colorScheme: colorScheme,
+                        cacheWidth: PlayerArtwork.transitionCacheWidth(context),
+                      ),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        for (final expanded in [true, false])
                         if (expanded
                             ? !fullBleed && (!compact || progress < 1)
                             : compact || progress > 0)
@@ -345,7 +355,8 @@ class MornyePlayerLayout extends ConsumerWidget {
                               ),
                             ),
                           ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],
