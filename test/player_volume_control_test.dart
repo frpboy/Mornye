@@ -265,4 +265,68 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'Material keeps the optimistic value until the system volume echo arrives',
+    (tester) async {
+      final writes = <double>[];
+      final completions = <Completer<void>>[];
+      final volumes = StreamController<double>();
+      addTearDown(volumes.close);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            systemVolumeProvider.overrideWith((ref) => volumes.stream),
+            systemVolumeWriterProvider.overrideWith((ref) => (value) {
+              writes.add(value);
+              final completion = Completer<void>();
+              completions.add(completion);
+              return completion.future;
+            }),
+          ],
+          child: MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(body: PlayerVolumeControl()),
+          ),
+        ),
+      );
+      volumes.add(0.5);
+      await tester.pumpAndSettle();
+      AppSlider slider() => tester.widget(find.byType(AppSlider));
+
+      final finger = await tester.startGesture(
+        tester.getCenter(find.byType(AppSlider)),
+      );
+      await finger.moveBy(const Offset(100, 0));
+      await tester.pump();
+      final requested = slider().value;
+      expect(requested, greaterThan(0.5));
+      await finger.up();
+
+      // The drag-end callback coalesces its final value behind the in-flight
+      // platform write. Complete both writes without publishing an echo yet.
+      expect(writes, hasLength(1));
+      completions[0].complete();
+      await tester.pump();
+      expect(writes, hasLength(2));
+      completions[1].complete();
+      await tester.pump();
+
+      // The platform write has finished, but its listener event has not been
+      // delivered. The slider must not flash back to the stale 50% value.
+      expect(slider().value, requested);
+
+      volumes.add(requested);
+      await tester.pumpAndSettle();
+      expect(slider().value, requested);
+
+      // Once acknowledged, subsequent hardware/system changes take control.
+      volumes.add(0.25);
+      await tester.pumpAndSettle();
+      expect(slider().value, 0.25);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
 }
