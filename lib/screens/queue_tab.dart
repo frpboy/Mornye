@@ -468,7 +468,9 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   void _onFilterPageChanged(int index) {
     if (widget.librarySection != null) return;
     if (_modeForPage(index) == 'playlists' && _sortMode.startsWith('size-')) {
+      _sortModeChangedByUser = true;
       setState(() => _sortMode = 'latest');
+      unawaited(_saveLibrarySortMode('latest'));
     }
     HapticFeedback.selectionClick();
     ref
@@ -553,6 +555,8 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   }
 
   void _resetFilters() {
+    _sortModeChangedByUser = true;
+    unawaited(_saveLibrarySortMode('latest'));
     setState(() {
       _filterSource = null;
       _filterQuality = null;
