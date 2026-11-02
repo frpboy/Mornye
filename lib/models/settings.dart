@@ -129,6 +129,7 @@ class AppSettings {
   final bool usePrimaryArtistOnly; // Strip featured artists from folder name
   final bool filterContributingArtistsInAlbumArtist;
   final String historyViewMode;
+  final String historySortMode;
   final String historyFilterMode;
 
   /// Library view opened when switching to the Library tab:
@@ -312,6 +313,7 @@ class AppSettings {
     this.usePrimaryArtistOnly = false,
     this.filterContributingArtistsInAlbumArtist = false,
     this.historyViewMode = 'grid',
+    this.historySortMode = 'latest',
     this.historyFilterMode = 'all',
     this.defaultLibraryView = 'last',
     this.libraryQualityLabelMode = AppSettings.libraryQualityLabelBitDepthOnly,
@@ -462,6 +464,7 @@ class AppSettings {
     bool? usePrimaryArtistOnly,
     bool? filterContributingArtistsInAlbumArtist,
     String? historyViewMode,
+    String? historySortMode,
     String? historyFilterMode,
     String? defaultLibraryView,
     String? libraryQualityLabelMode,
@@ -606,6 +609,7 @@ class AppSettings {
           filterContributingArtistsInAlbumArtist ??
           this.filterContributingArtistsInAlbumArtist,
       historyViewMode: historyViewMode ?? this.historyViewMode,
+      historySortMode: historySortMode ?? this.historySortMode,
       historyFilterMode: historyFilterMode ?? this.historyFilterMode,
       defaultLibraryView: defaultLibraryView ?? this.defaultLibraryView,
       libraryQualityLabelMode:
