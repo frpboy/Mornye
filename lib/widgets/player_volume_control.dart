@@ -35,6 +35,7 @@ class _PlayerVolumeControlState extends ConsumerState<PlayerVolumeControl> {
   double? _pendingVolume;
   bool _dragging = false;
   bool _writing = false;
+
   static const _previewEchoTimeout = Duration(milliseconds: 750);
   Timer? _previewResetTimer;
   double? _reportedVolume;
