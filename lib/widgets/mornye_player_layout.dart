@@ -262,7 +262,6 @@ class MornyePlayerLayout extends ConsumerWidget {
                   // transition reuses the live cover instead of inserting a
                   // duplicate while its previous instance is still fading.
                   child: PlayerTrackSwipeArtwork(
-                    current: mediaItem,
                     builder: (item) => ClipRRect(
                       borderRadius: BorderRadius.circular(fullBleed ? 0 : 12),
                       child: PlayerArtwork(
