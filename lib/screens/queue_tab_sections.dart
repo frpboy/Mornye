@@ -206,6 +206,7 @@ extension _QueueTabSections on _QueueTabState {
       _sortMode = mode;
       _resetLibraryPaging();
     });
+    ref.read(settingsProvider.notifier).setHistorySortMode(mode);
   }
 
   /// The sort modes as a checked menu below the sort button, on desktop.
