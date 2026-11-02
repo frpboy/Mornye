@@ -310,20 +310,25 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   }
 
   Future<void> _restoreLibrarySortMode() async {
-    final preferences = await SharedPreferences.getInstance();
-    final savedMode = preferences.getString(_librarySortPreferenceKey);
-    if (!mounted ||
-        _sortModeChangedByUser ||
-        savedMode == null ||
-        !_persistableLibrarySortModes.contains(savedMode) ||
-        (widget.librarySection == 'playlists' && savedMode.startsWith('size-'))) {
-      return;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final savedMode = preferences.getString(_librarySortPreferenceKey);
+      if (!mounted ||
+          _sortModeChangedByUser ||
+          savedMode == null ||
+          !_persistableLibrarySortModes.contains(savedMode) ||
+          (widget.librarySection == 'playlists' &&
+              savedMode.startsWith('size-'))) {
+        return;
+      }
+      if (savedMode == _sortMode) return;
+      setState(() {
+        _sortMode = savedMode;
+        _resetLibraryPaging();
+      });
+    } catch (_) {
+      // Sorting remains usable with its default when preferences are unavailable.
     }
-    if (savedMode == _sortMode) return;
-    setState(() {
-      _sortMode = savedMode;
-      _resetLibraryPaging();
-    });
   }
 
   Future<void> _saveLibrarySortMode(String mode) async {
@@ -331,8 +336,12 @@ class _QueueTabState extends ConsumerState<QueueTab> {
         (widget.librarySection == 'playlists' && mode.startsWith('size-'))) {
       return;
     }
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString(_librarySortPreferenceKey, mode);
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(_librarySortPreferenceKey, mode);
+    } catch (_) {
+      // A preference write must not interrupt Library interactions.
+    }
   }
 
   void _initializePageController() {
