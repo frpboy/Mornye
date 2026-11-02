@@ -99,6 +99,7 @@ AppSettings _$AppSettingsFromJson(Map<String, dynamic> json) => AppSettings(
   filterContributingArtistsInAlbumArtist:
       json['filterContributingArtistsInAlbumArtist'] as bool? ?? false,
   historyViewMode: json['historyViewMode'] as String? ?? 'grid',
+  historySortMode: json['historySortMode'] as String? ?? 'latest',
   historyFilterMode: json['historyFilterMode'] as String? ?? 'all',
   defaultLibraryView: json['defaultLibraryView'] as String? ?? 'last',
   libraryQualityLabelMode:
@@ -249,6 +250,7 @@ Map<String, dynamic> _$AppSettingsToJson(
   'filterContributingArtistsInAlbumArtist':
       instance.filterContributingArtistsInAlbumArtist,
   'historyViewMode': instance.historyViewMode,
+  'historySortMode': instance.historySortMode,
   'historyFilterMode': instance.historyFilterMode,
   'defaultLibraryView': instance.defaultLibraryView,
   'libraryQualityLabelMode': instance.libraryQualityLabelMode,
