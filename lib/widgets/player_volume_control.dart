@@ -35,11 +35,76 @@ class _PlayerVolumeControlState extends ConsumerState<PlayerVolumeControl> {
   double? _pendingVolume;
   bool _dragging = false;
   bool _writing = false;
+  static const _previewEchoTimeout = Duration(milliseconds: 750);
+  Timer? _previewResetTimer;
+  double? _reportedVolume;
 
   void _setVolume(double value) {
+    _previewResetTimer?.cancel();
     setState(() => _preview = value);
     _pendingVolume = value;
     if (!_writing) unawaited(_flushVolume());
+  }
+
+  bool _volumeMatches(double? reported, double expected) =>
+      reported != null && (reported - expected).abs() <= 0.04;
+
+  /// Keep the thumb optimistic until the platform listener acknowledges the
+  /// last write. The write Future can complete before that event is delivered.
+  void _finishVolumeWrite() {
+    if (!mounted || _dragging || _pendingVolume != null) return;
+    final expected = _preview;
+    if (expected == null) return;
+
+    _previewResetTimer?.cancel();
+    if (_volumeMatches(_reportedVolume, expected)) {
+      setState(() => _preview = null);
+      return;
+    }
+
+    // Some platform routes do not send an echo for every programmatic write.
+    // Release the optimistic value after a bounded grace period in that case.
+    _previewResetTimer = Timer(_previewEchoTimeout, () {
+      if (!mounted ||
+          _dragging ||
+          _writing ||
+          _pendingVolume != null ||
+          _preview != expected) {
+        return;
+      }
+      setState(() => _preview = null);
+    });
+  }
+
+  void _reconcilePreview(double? reportedVolume) {
+    _reportedVolume = reportedVolume;
+    final preview = _preview;
+    if (preview == null ||
+        _dragging ||
+        _writing ||
+        _pendingVolume != null ||
+        !_volumeMatches(reportedVolume, preview)) {
+      return;
+    }
+
+    _previewResetTimer?.cancel();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _dragging ||
+          _writing ||
+          _pendingVolume != null ||
+          _preview != preview ||
+          !_volumeMatches(_reportedVolume, preview)) {
+        return;
+      }
+      setState(() => _preview = null);
+    });
+  }
+
+  @override
+  void dispose() {
+    _previewResetTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _flushVolume() async {
@@ -67,7 +132,7 @@ class _PlayerVolumeControlState extends ConsumerState<PlayerVolumeControl> {
       }
     } finally {
       _writing = false;
-      if (mounted && !_dragging) setState(() => _preview = null);
+      _finishVolumeWrite();
     }
   }
 
@@ -86,6 +151,7 @@ class _PlayerVolumeControlState extends ConsumerState<PlayerVolumeControl> {
         : usb.available
         ? usb.fraction
         : null;
+    _reconcilePreview(volume);
     final value = (_preview ?? volume ?? 0).clamp(0.0, 1.0);
     String percentage(double volume) => '${(volume * 100).round()}%';
     final control = Semantics(
