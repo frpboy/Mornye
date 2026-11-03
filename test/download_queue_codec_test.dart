@@ -146,8 +146,18 @@ void main() {
         error: 'Verification did not complete',
         errorType: DownloadErrorType.verificationRequired,
       );
+      // Older app versions persisted an interrupted verification handoff as
+      // queued, so the decoder must recognise that legacy representation too.
+      final legacyQueued = _item(
+        2102,
+        status: DownloadStatus.queued,
+      ).copyWith(
+        id: 'legacy-verification-queued',
+        error: 'Waiting for verification',
+        errorType: DownloadErrorType.verificationRequired,
+      );
       final rows = [
-        for (final item in [interrupted, terminal])
+        for (final item in [interrupted, terminal, legacyQueued])
           {
             'id': item.id,
             'status': downloadQueuePersistenceStatus(
@@ -162,6 +172,7 @@ void main() {
       expect(restored.items.map((item) => item.id), [
         'verification-interrupted',
         'verification-failed',
+        'legacy-verification-queued',
       ]);
       expect(
         restored.items.map((item) => item.status),
@@ -173,7 +184,11 @@ void main() {
       );
       expect(
         restored.items.map((item) => item.error),
-        ['Waiting for verification', 'Verification did not complete'],
+        [
+          'Waiting for verification',
+          'Verification did not complete',
+          'Waiting for verification',
+        ],
       );
     },
   );
