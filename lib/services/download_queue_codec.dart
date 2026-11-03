@@ -18,7 +18,7 @@ DownloadStatus downloadQueuePersistenceStatus(
   // Verification requires foreground user interaction. Persist an interrupted
   // handoff as a visible failure instead of silently reopening the browser on
   // every app launch.
-  DownloadStatus.downloading
+  DownloadStatus.queued || DownloadStatus.downloading
       when errorType == DownloadErrorType.verificationRequired =>
     DownloadStatus.failed,
   DownloadStatus.downloading || DownloadStatus.finalizing =>
