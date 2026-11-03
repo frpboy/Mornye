@@ -15,11 +15,14 @@ DownloadStatus downloadQueuePersistenceStatus(
   DownloadStatus status, {
   DownloadErrorType? errorType,
 }) => switch (status) {
-  DownloadStatus.failed
+  // Verification requires foreground user interaction. Persist an interrupted
+  // handoff as a visible failure instead of silently reopening the browser on
+  // every app launch.
+  DownloadStatus.downloading
       when errorType == DownloadErrorType.verificationRequired =>
+    DownloadStatus.failed,
+  DownloadStatus.downloading || DownloadStatus.finalizing =>
     DownloadStatus.queued,
-  DownloadStatus.downloading ||
-  DownloadStatus.finalizing => DownloadStatus.queued,
   _ => status,
 };
 
@@ -72,7 +75,12 @@ RestoredDownloadQueue _decodeRows(List<Map<String, dynamic>> rows) {
       if (item.status != status) {
         item = item.copyWith(status: status, progress: 0);
       }
-      if (status == DownloadStatus.queued || status == DownloadStatus.skipped) {
+      if (status == DownloadStatus.queued ||
+          status == DownloadStatus.skipped ||
+          (status == DownloadStatus.failed &&
+              item.errorType == DownloadErrorType.verificationRequired)) {
+        // Keep verification failures visible for an explicit user retry, but
+        // do not count them as runnable queue work.
         pending.add(item);
       }
     } catch (_) {
