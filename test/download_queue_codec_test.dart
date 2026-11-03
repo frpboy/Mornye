@@ -160,11 +160,15 @@ void main() {
         for (final item in [interrupted, terminal, legacyQueued])
           {
             'id': item.id,
-            'status': downloadQueuePersistenceStatus(
-              item.status,
-              errorType: item.errorType,
-            ).name,
-            'item_json': encodeDownloadQueueItemForPersistence(item),
+            'status': item.id == 'legacy-verification-queued'
+                ? DownloadStatus.queued.name
+                : downloadQueuePersistenceStatus(
+                    item.status,
+                    errorType: item.errorType,
+                  ).name,
+            'item_json': item.id == 'legacy-verification-queued'
+                ? jsonEncode(item.toJson())
+                : encodeDownloadQueueItemForPersistence(item),
           },
       ];
 
