@@ -84,7 +84,7 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test(
-    'verification waits survive process restart without reviving terminal failures',
+    'interrupted verification waits restore as visible failures, not auto-retries',
     () async {
       final store = _Store();
       var items = [
@@ -118,11 +118,12 @@ void main() {
       items = await restarted.restore();
       expect(items.map((item) => item.id), ['waiting', 'timeout', 'cancelled']);
       expect(items.map((item) => item.status), [
-        DownloadStatus.queued,
-        DownloadStatus.queued,
+        DownloadStatus.failed,
+        DownloadStatus.failed,
         DownloadStatus.skipped,
       ]);
-      expect(store.rows['timeout']!['status'], 'queued');
+      expect(store.rows['waiting']!['status'], 'failed');
+      expect(store.rows['timeout']!['status'], 'failed');
       expect(items.first.qualityOverride, 'HI_RES');
     },
   );
