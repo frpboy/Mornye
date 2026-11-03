@@ -128,6 +128,57 @@ void main() {
   );
 
   test(
+    'verification-interrupted downloads restore as failed and stay out of auto-run queue',
+    () async {
+      final interrupted = _item(
+        2100,
+        status: DownloadStatus.downloading,
+      ).copyWith(
+        id: 'verification-interrupted',
+        error: 'Waiting for verification',
+        errorType: DownloadErrorType.verificationRequired,
+      );
+      final terminal = _item(
+        2101,
+        status: DownloadStatus.failed,
+      ).copyWith(
+        id: 'verification-failed',
+        error: 'Verification did not complete',
+        errorType: DownloadErrorType.verificationRequired,
+      );
+      final rows = [
+        for (final item in [interrupted, terminal])
+          {
+            'id': item.id,
+            'status': downloadQueuePersistenceStatus(
+              item.status,
+              errorType: item.errorType,
+            ).name,
+            'item_json': encodeDownloadQueueItemForPersistence(item),
+          },
+      ];
+
+      final restored = await decodeDownloadQueueRows(rows);
+      expect(restored.items.map((item) => item.id), [
+        'verification-interrupted',
+        'verification-failed',
+      ]);
+      expect(
+        restored.items.map((item) => item.status),
+        everyElement(DownloadStatus.failed),
+      );
+      expect(
+        restored.items.map((item) => item.errorType),
+        everyElement(DownloadErrorType.verificationRequired),
+      );
+      expect(
+        restored.items.map((item) => item.error),
+        ['Waiting for verification', 'Verification did not complete'],
+      );
+    },
+  );
+
+  test(
     'chunked restore keeps repair IDs, statuses, ordering, and cache identity',
     () async {
       final items = List.generate(2100, (index) => _item(index));
