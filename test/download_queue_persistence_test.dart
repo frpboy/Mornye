@@ -97,6 +97,10 @@ void main() {
           status: DownloadStatus.failed,
         ).copyWith(errorType: DownloadErrorType.verificationRequired),
         _item(
+          'legacy-queued',
+          status: DownloadStatus.queued,
+        ).copyWith(errorType: DownloadErrorType.verificationRequired),
+        _item(
           'unavailable',
           status: DownloadStatus.failed,
         ).copyWith(errorType: DownloadErrorType.notFound),
@@ -116,14 +120,21 @@ void main() {
       final restarted = create();
       addTearDown(restarted.dispose);
       items = await restarted.restore();
-      expect(items.map((item) => item.id), ['waiting', 'timeout', 'cancelled']);
+      expect(items.map((item) => item.id), [
+        'waiting',
+        'timeout',
+        'legacy-queued',
+        'cancelled',
+      ]);
       expect(items.map((item) => item.status), [
+        DownloadStatus.failed,
         DownloadStatus.failed,
         DownloadStatus.failed,
         DownloadStatus.skipped,
       ]);
       expect(store.rows['waiting']!['status'], 'failed');
       expect(store.rows['timeout']!['status'], 'failed');
+      expect(store.rows['legacy-queued']!['status'], 'failed');
       expect(items.first.qualityOverride, 'HI_RES');
     },
   );
