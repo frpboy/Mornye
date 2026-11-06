@@ -10060,4 +10060,22 @@
   "@collectionSuggestionsAddHere": {
     "description": "Tooltip of the button that adds a suggested song to the user's playlist shown above"
   }
+,
+  "settingsDownloadNetworkAnyDesktop": "Any Network",
+  "@settingsDownloadNetworkAnyDesktop": {
+    "description": "Desktop label for allowing downloads over any available network, including Wi-Fi and Ethernet"
+  },
+  "settingsDownloadNetworkSubtitleDesktop": "Choose which network to use for downloads. Wi-Fi Only pauses downloads whenever Wi-Fi is unavailable.",
+  "@settingsDownloadNetworkSubtitleDesktop": {
+    "description": "Desktop explanation for download network preferences"
+  },
+  "downloadNetworkAnySubtitleDesktop": "Use any available network, including Wi-Fi and Ethernet",
+  "@downloadNetworkAnySubtitleDesktop": {
+    "description": "Desktop subtitle for the any-network download option"
+  },
+  "downloadNetworkWifiOnlySubtitleDesktop": "Downloads pause whenever Wi-Fi is unavailable",
+  "@downloadNetworkWifiOnlySubtitleDesktop": {
+    "description": "Desktop subtitle for the Wi-Fi-only download option"
+  }
+
 }

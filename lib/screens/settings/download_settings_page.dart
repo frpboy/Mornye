@@ -52,6 +52,8 @@ class _DownloadSettingsPageState extends ConsumerState<DownloadSettingsPage> {
         selectedDownloadExtension?.qualityOptions ?? const <QualityOption>[];
     final canSelectQuality = qualityOptions.isNotEmpty;
     final nativeWorkerAvailable = Platform.isAndroid && hasDownloadExtensions;
+    final isDesktopPlatform =
+        Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
     return PopScope(
       canPop: true,
@@ -196,6 +198,8 @@ class _DownloadSettingsPageState extends ConsumerState<DownloadSettingsPage> {
                   title: context.l10n.settingsDownloadNetwork,
                   subtitle: settings.downloadNetworkMode == 'wifi_only'
                       ? context.l10n.settingsDownloadNetworkWifiOnly
+                      : isDesktopPlatform
+                      ? context.l10n.settingsDownloadNetworkAnyDesktop
                       : context.l10n.settingsDownloadNetworkAny,
                   onTap: () => _showNetworkModePicker(
                     context,
@@ -478,20 +482,30 @@ class _DownloadSettingsPageState extends ConsumerState<DownloadSettingsPage> {
   ) => showAppChoiceSheet(
     context: context,
     title: context.l10n.settingsDownloadNetwork,
-    subtitle: context.l10n.settingsDownloadNetworkSubtitle,
+    subtitle: Platform.isWindows || Platform.isLinux || Platform.isMacOS
+        ? context.l10n.settingsDownloadNetworkSubtitleDesktop
+        : context.l10n.settingsDownloadNetworkSubtitle,
     selected: current,
     choices: [
       AppChoice(
         'any',
-        Icons.signal_cellular_alt,
-        context.l10n.settingsDownloadNetworkAny,
-        subtitle: context.l10n.downloadNetworkAnySubtitle,
+        Platform.isWindows || Platform.isLinux || Platform.isMacOS
+            ? Icons.lan_outlined
+            : Icons.signal_cellular_alt,
+        Platform.isWindows || Platform.isLinux || Platform.isMacOS
+            ? context.l10n.settingsDownloadNetworkAnyDesktop
+            : context.l10n.settingsDownloadNetworkAny,
+        subtitle: Platform.isWindows || Platform.isLinux || Platform.isMacOS
+            ? context.l10n.downloadNetworkAnySubtitleDesktop
+            : context.l10n.downloadNetworkAnySubtitle,
       ),
       AppChoice(
         'wifi_only',
         Icons.wifi,
         context.l10n.settingsDownloadNetworkWifiOnly,
-        subtitle: context.l10n.downloadNetworkWifiOnlySubtitle,
+        subtitle: Platform.isWindows || Platform.isLinux || Platform.isMacOS
+            ? context.l10n.downloadNetworkWifiOnlySubtitleDesktop
+            : context.l10n.downloadNetworkWifiOnlySubtitle,
       ),
     ],
     onSelected: (mode) =>
