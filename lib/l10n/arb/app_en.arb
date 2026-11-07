@@ -1609,6 +1609,10 @@
   "@progressReadingCsv": {
     "description": "Progress indicator - parsing CSV file"
   },
+  "playlistImportSkipFetching": "Skip fetching",
+  "@playlistImportSkipFetching": {
+    "description": "Button that stops fetching metadata during a playlist file import; the import itself continues"
+  },
   "searchSongs": "Songs",
   "@searchSongs": {
     "description": "Search result category - songs"
