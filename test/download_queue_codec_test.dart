@@ -127,61 +127,64 @@ void main() {
     },
   );
 
-  test('verification-interrupted downloads restore as failed and stay out of auto-run queue', () async {
-    final interrupted = _item(2100, status: DownloadStatus.downloading)
-        .copyWith(
-          id: 'verification-interrupted',
-          error: 'Waiting for verification',
-          errorType: DownloadErrorType.verificationRequired,
-        );
-    final terminal = _item(2101, status: DownloadStatus.failed).copyWith(
-      id: 'verification-failed',
-      error: 'Verification did not complete',
-      errorType: DownloadErrorType.verificationRequired,
-    );
-    // Older app versions persisted an interrupted verification handoff as
-    // queued, so the decoder must recognise that legacy representation too.
-    final legacyQueued = _item(2102, status: DownloadStatus.queued).copyWith(
-      id: 'legacy-verification-queued',
-      error: 'Waiting for verification',
-      errorType: DownloadErrorType.verificationRequired,
-    );
-    final rows = [
-      for (final item in [interrupted, terminal, legacyQueued])
-        {
-          'id': item.id,
-          'status': item.id == 'legacy-verification-queued'
-              ? DownloadStatus.queued.name
-              : downloadQueuePersistenceStatus(
-                  item.status,
-                  errorType: item.errorType,
-                ).name,
-          'item_json': item.id == 'legacy-verification-queued'
-              ? jsonEncode(item.toJson())
-              : encodeDownloadQueueItemForPersistence(item),
-        },
-    ];
+  test(
+    'verification-interrupted downloads restore as failed and stay out of auto-run queue',
+    () async {
+      final interrupted = _item(2100, status: DownloadStatus.downloading)
+          .copyWith(
+            id: 'verification-interrupted',
+            error: 'Waiting for verification',
+            errorType: DownloadErrorType.verificationRequired,
+          );
+      final terminal = _item(2101, status: DownloadStatus.failed).copyWith(
+        id: 'verification-failed',
+        error: 'Verification did not complete',
+        errorType: DownloadErrorType.verificationRequired,
+      );
+      // Older app versions persisted an interrupted verification handoff as
+      // queued, so the decoder must recognise that legacy representation too.
+      final legacyQueued = _item(2102, status: DownloadStatus.queued).copyWith(
+        id: 'legacy-verification-queued',
+        error: 'Waiting for verification',
+        errorType: DownloadErrorType.verificationRequired,
+      );
+      final rows = [
+        for (final item in [interrupted, terminal, legacyQueued])
+          {
+            'id': item.id,
+            'status': item.id == 'legacy-verification-queued'
+                ? DownloadStatus.queued.name
+                : downloadQueuePersistenceStatus(
+                    item.status,
+                    errorType: item.errorType,
+                  ).name,
+            'item_json': item.id == 'legacy-verification-queued'
+                ? jsonEncode(item.toJson())
+                : encodeDownloadQueueItemForPersistence(item),
+          },
+      ];
 
-    final restored = await decodeDownloadQueueRows(rows);
-    expect(restored.items.map((item) => item.id), [
-      'verification-interrupted',
-      'verification-failed',
-      'legacy-verification-queued',
-    ]);
-    expect(
-      restored.items.map((item) => item.status),
-      everyElement(DownloadStatus.failed),
-    );
-    expect(
-      restored.items.map((item) => item.errorType),
-      everyElement(DownloadErrorType.verificationRequired),
-    );
-    expect(restored.items.map((item) => item.error), [
-      'Waiting for verification',
-      'Verification did not complete',
-      'Waiting for verification',
-    ]);
-  });
+      final restored = await decodeDownloadQueueRows(rows);
+      expect(restored.items.map((item) => item.id), [
+        'verification-interrupted',
+        'verification-failed',
+        'legacy-verification-queued',
+      ]);
+      expect(
+        restored.items.map((item) => item.status),
+        everyElement(DownloadStatus.failed),
+      );
+      expect(
+        restored.items.map((item) => item.errorType),
+        everyElement(DownloadErrorType.verificationRequired),
+      );
+      expect(restored.items.map((item) => item.error), [
+        'Waiting for verification',
+        'Verification did not complete',
+        'Waiting for verification',
+      ]);
+    },
+  );
 
   test(
     'chunked restore keeps repair IDs, statuses, ordering, and cache identity',
