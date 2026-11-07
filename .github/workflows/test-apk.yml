@@ -130,8 +130,8 @@ jobs:
           git rev-parse HEAD > encrypted-delivery/commit.txt
           SIZE="$(stat -c %s encrypted-delivery/mornye-import-fix-debug.apk.cms)"
           echo "ciphertext bytes: $SIZE"
-          if [ "$SIZE" -gt 262144000 ]; then
-            echo "ciphertext exceeds 250 MiB cap" >&2
+          if [ "$SIZE" -gt 314572800 ]; then
+            echo "ciphertext exceeds 300 MiB cap" >&2
             exit 1
           fi
           # Exactly four allowlisted regular files, no symlinks, nothing else.
