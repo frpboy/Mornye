@@ -99,13 +99,33 @@ class _PositionTicker extends PositionUpdater {
 
   final Duration interval;
   final bool Function()? wanted;
+  final _positions = StreamController<Duration>.broadcast();
   Timer? _timer;
+  bool _polling = false;
+  bool _disposed = false;
+
+  @override
+  Stream<Duration> get positionStream => _positions.stream;
+
+  @override
+  Future<void> update() async {
+    final position = await getPosition();
+    // A retired updater has already closed its stream when a slow reply
+    // arrives. Check immediately before publishing it.
+    if (!_disposed && position != null) _positions.add(position);
+  }
 
   @override
   void start() {
     _timer?.cancel();
     _timer = Timer.periodic(interval, (_) async {
-      if (wanted?.call() ?? true) await update();
+      if (_polling || !(wanted?.call() ?? true)) return;
+      _polling = true;
+      try {
+        await update();
+      } finally {
+        _polling = false;
+      }
     });
   }
 
@@ -113,6 +133,13 @@ class _PositionTicker extends PositionUpdater {
   void stop() {
     _timer?.cancel();
     _timer = null;
+  }
+
+  @override
+  Future<void> dispose() async {
+    _disposed = true;
+    await super.dispose();
+    await _positions.close();
   }
 }
 
@@ -372,6 +399,7 @@ class AudioplayersPlaybackDeck implements PlaybackDeck {
       _token = ++_nextToken;
       final preparingToken = _token;
       _preparing = true;
+      usbAudioStatus.value = const UsbAudioStatus(reason: 'preparing');
       _nativeSubscription ??=
           (_nativeEvents ??= _events.receiveBroadcastStream()).listen(
             _onNativeEvent,
@@ -416,9 +444,13 @@ class AudioplayersPlaybackDeck implements PlaybackDeck {
             transport: response?['transport'] as String? ?? 'pcm',
             driver: response?['driver'] as String? ?? 'android',
           );
-          usbAudioStatus.value = UsbAudioStatus(
-            reason: _volumeBlocked ? 'volume_unavailable' : 'ready',
+          _log.i(
+            'Native output prepared: ${_preparedStatus.driver}, '
+            '${_preparedStatus.sampleRate} Hz, ${_preparedStatus.bitDepth}-bit',
           );
+          usbAudioStatus.value = _volumeBlocked
+              ? const UsbAudioStatus(reason: 'volume_unavailable')
+              : const UsbAudioStatus(reason: 'ready');
           _durations.add(_duration!);
           return;
         }
@@ -467,6 +499,42 @@ class AudioplayersPlaybackDeck implements PlaybackDeck {
     }
     if (abandoned.isCompleted) return;
     await _syncEqualizer();
+  }
+
+  /// Reconcile the display with the current native session without reopening it.
+  Future<void> refreshNativeStatus() async {
+    if (!_direct || _disposed || _preparing) return;
+    final token = _token;
+    try {
+      final status = await _channel.invokeMapMethod<String, dynamic>('status');
+      if (_disposed ||
+          !_direct ||
+          token != _token ||
+          status?['token'] != token) {
+        return;
+      }
+      final reason = status?['reason'];
+      if (reason == 'active') {
+        if (usbAudioStatus.value.reason != 'active') {
+          _log.i(
+            'Native output status reconciled: ${_preparedStatus.driver} active',
+          );
+        }
+        usbAudioStatus.value = _preparedStatus;
+      } else if (reason == 'ready' || reason == 'volume_unavailable') {
+        if (usbAudioStatus.value.reason != reason) {
+          usbAudioStatus.value = UsbAudioStatus(reason: reason as String);
+        }
+      } else if (reason == 'route_changed' || reason == 'idle') {
+        if (!_routeLost) {
+          _pauseLostRoute(const UsbAudioStatus(reason: 'route_changed'));
+        }
+      }
+    } on MissingPluginException {
+      // An older native build has no read-only status query.
+    } on PlatformException catch (error) {
+      _log.w('Cannot refresh native output status: ${error.code}');
+    }
   }
 
   void _onNativeEvent(dynamic event) {
@@ -554,6 +622,9 @@ class AudioplayersPlaybackDeck implements PlaybackDeck {
       return _ordinary.resume();
     }
     if (_disposed || token != _token || !_direct) return;
+    if (!_nativeStarted) {
+      _log.i('Native output active: ${_preparedStatus.driver}');
+    }
     _nativeStarted = true;
     _setState(PlaybackDeckState.playing);
     usbAudioStatus.value = _preparedStatus;
