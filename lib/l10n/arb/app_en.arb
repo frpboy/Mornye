@@ -10308,9 +10308,6 @@
   "downloadNetworkWifiOnlySubtitleDesktop": "Downloads pause whenever Wi-Fi is unavailable",
   "@downloadNetworkWifiOnlySubtitleDesktop": {
     "description": "Desktop subtitle for the Wi-Fi-only download option"
-  }
-
-}
   },
   "sectionExistingDownloads": "Existing Files",
   "@sectionExistingDownloads": {
