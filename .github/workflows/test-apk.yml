@@ -1,0 +1,155 @@
+name: Test APK (import fix)
+
+# Isolated test-build workflow: runs only on pushes to the test branch.
+# Builds one debug APK (package com.zarz.mornye.debug) for the import-fix
+# tree, encrypts it to an ephemeral recipient cert, and retains only the
+# ciphertext for 1 day. No secrets, no release signing, no deploy.
+on:
+  push:
+    branches:
+      - test/import-fix-apk
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-debug-apk:
+    name: Build debug APK for install testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      MORNYE_DISCORD_SDK: "0"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: "temurin"
+          java-version: "25"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          flutter-version-file: .fvmrc
+          cache: true
+
+      - name: Prepare Flutter framework patch
+        run: dart scripts/prepare_flutter_sdk.dart
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          gradle-version: "9.8.2"
+          gradle-home-cache-includes: |
+            caches/modules-2
+            notifications
+
+      - name: Install Android SDK & NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;30.0.16248370" \
+            "platforms;android-37.0" \
+            "build-tools;37.0.0" \
+            "cmake;4.1.2"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Configure Flutter SDK for Gradle
+        run: echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
+
+      - name: Install Rust application build prerequisites
+        run: |
+          cd rust_backend
+          rustup show
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev ffmpeg
+
+      - name: Cache Cargo registry and build output
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust_backend/target
+          key: cargo-${{ runner.os }}-android-${{ hashFiles('rust_backend/rust-toolchain.toml') }}-${{ hashFiles('rust_backend/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-android-${{ hashFiles('rust_backend/rust-toolchain.toml') }}-
+
+      - name: Package debug application
+        run: gradle -p android :app:assembleDebug
+
+      - name: Verify and fingerprint debug APK
+        run: |
+          set -euo pipefail
+          # Locate the direct-Gradle debug APK deterministically: exactly one
+          # match under any outputs/ directory, no assumed layout.
+          mapfile -t APKS < <(find . -type f -name 'app-debug.apk' -path '*/outputs/*')
+          if [ "${#APKS[@]}" -ne 1 ]; then
+            echo "expected exactly one app-debug.apk, found ${#APKS[@]}: ${APKS[*]:-none}" >&2
+            exit 1
+          fi
+          APK="${APKS[0]}"
+          echo "APK=$APK"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$APK"
+          BADGING="$("$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$APK")"
+          echo "$BADGING" | grep -E "^package:|^application-label"
+          # Exact isolated test package and debug build, asserted (not printed only).
+          # Here-strings avoid SIGPIPE failures under pipefail.
+          grep -qE "^package: name='com\.zarz\.mornye\.debug' " <<< "$BADGING"
+          grep -q '^application-debuggable' <<< "$BADGING"
+          # Consuming grep (no -q) keeps unzip from dying on SIGPIPE.
+          unzip -l "$APK" | grep 'lib/arm64-v8a/libflutter.so' > /dev/null
+
+      - name: Encrypt APK to ephemeral recipient certificate
+        run: |
+          set -euo pipefail
+          mapfile -t APKS < <(find . -type f -name 'app-debug.apk' -path '*/outputs/*')
+          if [ "${#APKS[@]}" -ne 1 ]; then
+            echo "expected exactly one app-debug.apk, found ${#APKS[@]}" >&2
+            exit 1
+          fi
+          APK="${APKS[0]}"
+          mkdir -p encrypted-delivery
+          openssl cms -encrypt -binary -aes-256-cbc \
+            -in "$APK" -out encrypted-delivery/mornye-import-fix-debug.apk.cms \
+            -outform DER .github/test-apk-recipient.crt
+          sha256sum "$APK" > encrypted-delivery/plaintext-sha256.txt
+          sha256sum encrypted-delivery/mornye-import-fix-debug.apk.cms > encrypted-delivery/ciphertext-sha256.txt
+          git rev-parse HEAD > encrypted-delivery/commit.txt
+          SIZE="$(stat -c %s encrypted-delivery/mornye-import-fix-debug.apk.cms)"
+          echo "ciphertext bytes: $SIZE"
+          if [ "$SIZE" -gt 262144000 ]; then
+            echo "ciphertext exceeds 250 MiB cap" >&2
+            exit 1
+          fi
+          # Exactly four allowlisted regular files, no symlinks, nothing else.
+          if [ -n "$(find encrypted-delivery -type l)" ]; then
+            echo 'symlink in delivery folder' >&2
+            exit 1
+          fi
+          ACTUAL="$(find encrypted-delivery -type f -printf '%f\n' | sort | tr '\n' ' ')"
+          EXPECTED="ciphertext-sha256.txt commit.txt mornye-import-fix-debug.apk.cms plaintext-sha256.txt "
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "delivery folder content mismatch: $ACTUAL" >&2
+            exit 1
+          fi
+
+      - name: Retain encrypted APK for private delivery
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mornye-import-fix-debug-apk-encrypted
+          retention-days: 1
+          if-no-files-found: error
+          path: encrypted-delivery/
