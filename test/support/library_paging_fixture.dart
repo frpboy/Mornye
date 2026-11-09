@@ -24,6 +24,10 @@ Future<LibraryQueueStore> createLibraryPagingFixture(
   await db.execute(
     'CREATE INDEX history_db.idx_history_album_key ON history(album_key)',
   );
+  // HistorySchema v18 indexes the origin-path branch of the shadow check.
+  await db.execute(
+    'CREATE INDEX history_db.idx_history_origin ON history(origin_file_path)',
+  );
   await db.execute('''
     CREATE TABLE history_db.history_path_keys (
       item_id TEXT NOT NULL, path_key TEXT NOT NULL,
