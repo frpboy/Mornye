@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:mornye/services/network_offline_saver.dart';
@@ -162,6 +163,13 @@ class NetworkPlaybackCache {
   _Job? _active;
   Future<void>? _loading;
   Future<void> _saving = Future.value();
+
+  /// Test-only drain for the chained index writes. [_save] chains each
+  /// write onto [_saving] without awaiting it, so tests await this tail to
+  /// observe a settled index file. No production caller awaits this; it
+  /// schedules nothing and changes no production behavior.
+  @visibleForTesting
+  Future<void> get pendingIndexWrites => _saving;
   String? _root;
   bool _pumping = false;
   bool _unavailable = false;

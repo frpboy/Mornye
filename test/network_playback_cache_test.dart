@@ -347,8 +347,11 @@ void main() {
 
       final second = cache();
       final path = await second.lookup(_a);
-      // Let the index write finish.
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // Drain the chained index writes (temporary file, then rename).
+      // lookup awaited _ensureLoaded, so the sweep's write and lookup's own
+      // write are both already enqueued; no further write can be enqueued
+      // here because want() is never called on the second instance.
+      await second.pendingIndexWrites.timeout(_wait);
 
       expect(p.basename(path!), kept);
       expect(await files(), [kept, 'index.json']);
