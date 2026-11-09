@@ -57,10 +57,15 @@ Future<File> _writeNoise(Directory dir, {required bool translucent}) async {
 /// `ShaderMask` over the whole cover box. The blurred surface below it is
 /// the widget's own.
 class _WholeBoxMask extends StatelessWidget {
-  const _WholeBoxMask({required this.mediaItem, required this.showArtwork});
+  const _WholeBoxMask({
+    required this.mediaItem,
+    required this.showArtwork,
+    this.directArtwork = false,
+  });
 
   final MediaItem mediaItem;
   final bool showArtwork;
+  final bool directArtwork;
 
   @override
   Widget build(BuildContext context) {
@@ -91,20 +96,7 @@ class _WholeBoxMask extends StatelessWidget {
             curve: Curves.easeInOutCubic,
             child: Hero(
               tag: kNowPlayingArtworkHeroTag,
-              child: ShaderMask(
-                blendMode: BlendMode.dstIn,
-                shaderCallback: (bounds) => const LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  stops: [0, 0.72, 1],
-                  colors: [Colors.white, Colors.white, Colors.transparent],
-                ).createShader(bounds),
-                child: PlayerArtwork(
-                  artUri: mediaItem.artUri?.toString(),
-                  colorScheme: _scheme,
-                  cacheWidth: PlayerArtwork.transitionCacheWidth(context),
-                ),
-              ),
+              child: _artwork(context),
             ),
           ),
         ),
@@ -135,6 +127,27 @@ class _WholeBoxMask extends StatelessWidget {
       ],
     );
   }
+
+  Widget _artwork(BuildContext context) {
+    // Both independent oracles use the same ordinary artwork and decode as
+    // the player, never its split/clipped rendering topology.
+    final artwork = PlayerArtwork(
+      artUri: mediaItem.artUri?.toString(),
+      colorScheme: _scheme,
+      cacheWidth: PlayerArtwork.transitionCacheWidth(context),
+    );
+    if (directArtwork) return artwork;
+    return ShaderMask(
+      blendMode: BlendMode.dstIn,
+      shaderCallback: (bounds) => const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        stops: [0, 0.72, 1],
+        colors: [Colors.white, Colors.white, Colors.transparent],
+      ).createShader(bounds),
+      child: artwork,
+    );
+  }
 }
 
 typedef _BuildBackdrop = Widget Function(MediaItem item, bool showArtwork);
@@ -150,6 +163,72 @@ Widget _bandMask(MediaItem item, bool showArtwork) => MaterialPlayerBackdrop(
 
 Widget _wholeBoxMask(MediaItem item, bool showArtwork) =>
     _WholeBoxMask(mediaItem: item, showArtwork: showArtwork);
+
+Widget _directArtwork(MediaItem item, bool showArtwork) => _WholeBoxMask(
+  mediaItem: item,
+  showArtwork: showArtwork,
+  directArtwork: true,
+);
+
+// Test-owned visual specification, not values read from production layers.
+const _portraitCoverHeightFraction = 0.56;
+const _maximumCoverHeightFraction = 0.62;
+const _fullyOpaqueFadeFraction = 0.72;
+const _plateauSafetyRows = 1;
+
+void _expectTranslucentComposition(
+  Uint8List actual,
+  Uint8List wholeMask,
+  Uint8List direct, {
+  required Size physical,
+  required double dpr,
+}) {
+  final logical = physical / dpr;
+  final artworkHeight =
+      logical.width < logical.height * _portraitCoverHeightFraction
+      ? logical.height * _portraitCoverHeightFraction
+      : logical.width.clamp(0.0, logical.height * _maximumCoverHeightFraction);
+  final firstFadedRow = (artworkHeight * _fullyOpaqueFadeFraction * dpr)
+      .floor();
+  final maskedStartRow = math.max(0, firstFadedRow - _plateauSafetyRows);
+  final stride = physical.width.toInt() * 4;
+  expect(maskedStartRow, greaterThan(0));
+  expect(firstFadedRow + 2, lessThanOrEqualTo(physical.height.toInt()));
+  expect(actual.length, physical.height.toInt() * stride);
+  expect(wholeMask.length, actual.length);
+  expect(direct.length, actual.length);
+
+  void rows(Uint8List reference, int start, int end, String reason) {
+    expect(
+      _difference(
+        Uint8List.sublistView(actual, start * stride, end * stride),
+        Uint8List.sublistView(reference, start * stride, end * stride),
+      ).max,
+      lessThanOrEqualTo(1),
+      reason: reason,
+    );
+  }
+
+  // Every row and RGBA channel is checked, including the seam. The original
+  // <=1 whole-box bound is false for translucent direct source-over pixels;
+  // check those against an independent full direct draw, not a wider bound.
+  rows(direct, 0, maskedStartRow, 'unfaded upper composition');
+  rows(
+    wholeMask,
+    maskedStartRow,
+    physical.height.toInt(),
+    'legacy faded lower composition',
+  );
+  // The last direct row and the masked edge-crossing row lie in the fully
+  // opaque plateau. Both must still agree with the unsplit direct oracle.
+  rows(
+    direct,
+    maskedStartRow - 1,
+    firstFadedRow,
+    'plateau on both sides of the split',
+  );
+  rows(wholeMask, firstFadedRow - 1, firstFadedRow + 2, 'fade onset and seam');
+}
 
 /// Waits until the blur is cached and every image on screen has decoded.
 Future<void> _waitForImages(WidgetTester tester) async {
@@ -469,27 +548,37 @@ void main() {
     (const Size(1080, 2340), 2.625),
     (const Size(800, 1000), 2.0),
   ]) {
-    testWidgets('the band mask draws the whole-box mask at $physical, '
-        '${dpr}x', (tester) async {
-      tester.view.physicalSize = physical;
-      tester.view.devicePixelRatio = dpr;
-      addTearDown(tester.view.reset);
+    testWidgets(
+      'the band preserves opaque legacy and translucent composition at $physical, '
+      '${dpr}x',
+      (tester) async {
+        tester.view.physicalSize = physical;
+        tester.view.devicePixelRatio = dpr;
+        addTearDown(tester.view.reset);
 
-      for (final cover in [_cover, _noise, _translucent]) {
-        Future<Uint8List> capture(_BuildBackdrop backdrop) async {
-          await tester.pumpWidget(_app(backdrop(_item(cover), true)));
-          await _waitForImages(tester);
-          return _capture(tester, dpr);
+        for (final cover in [_cover, _noise, _translucent]) {
+          Future<Uint8List> capture(_BuildBackdrop backdrop) async {
+            await tester.pumpWidget(_app(backdrop(_item(cover), true)));
+            await _waitForImages(tester);
+            return _capture(tester, dpr);
+          }
+
+          final band = await capture(_bandMask);
+          final whole = await capture(_wholeBoxMask);
+          if (cover != _translucent) {
+            _expectRounding(band, whole, opaque: true, reason: cover.path);
+          } else {
+            _expectTranslucentComposition(
+              band,
+              whole,
+              await capture(_directArtwork),
+              physical: physical,
+              dpr: dpr,
+            );
+          }
         }
-
-        _expectRounding(
-          await capture(_bandMask),
-          await capture(_wholeBoxMask),
-          opaque: cover != _translucent,
-          reason: cover.path,
-        );
-      }
-    });
+      },
+    );
   }
 
   testWidgets('masks only the band of the cover the fade changes', (
