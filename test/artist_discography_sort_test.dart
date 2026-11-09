@@ -225,6 +225,9 @@ void main() {
           backend: (call) async {
             if (call.method != 'getProviderMetadata') return null;
             final args = call.arguments as Map<Object?, Object?>;
+            // The featured album may request its own editorial metadata.
+            // This fixture and call count describe artist pagination only.
+            if (args['resource_type'] != 'artist') return <String, dynamic>{};
             final id = args['resource_id'] as String;
             calls.add(id);
             final albums = id == artistId
