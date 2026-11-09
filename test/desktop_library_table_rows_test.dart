@@ -145,9 +145,9 @@ void main() {
     messenger.setMockMethodCallHandler(paths, (_) async => root.path);
     addTearDown(() => messenger.setMockMethodCallHandler(paths, null));
     // The Library's track pages and counts; every other query is empty.
-    const sqlite = MethodChannel('com.tekartik.sqflite');
+    const sqliteChannel = MethodChannel('com.tekartik.sqflite');
     final versions = <int, int>{};
-    messenger.setMockMethodCallHandler(sqlite, (call) async {
+    messenger.setMockMethodCallHandler(sqliteChannel, (call) async {
       final args = (call.arguments as Map?) ?? {};
       if (call.method == 'openDatabase') {
         final id = versions.length + 1;
@@ -191,7 +191,7 @@ void main() {
       }
       return {'columns': <String>[], 'rows': <List<Object?>>[]};
     });
-    addTearDown(() => messenger.setMockMethodCallHandler(sqlite, null));
+    addTearDown(() => messenger.setMockMethodCallHandler(sqliteChannel, null));
   });
   tearDown(() => debugDesktopPlatformOverride = null);
 
