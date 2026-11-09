@@ -739,9 +739,17 @@ void main() {
       () async {
         await commit([song(1)]);
         final phone = sources();
+        addTearDown(phone.close);
+        final requestSent = Completer<void>();
+        sendOverride = (_, _) async {
+          requestSent.complete();
+          return delivered;
+        };
         final name = '${_fileId(1)}.flac';
         final pending = phone.metadata(sourceId, name);
-        await pumpEventQueue();
+        // Catalog and received-file reads do real I/O. Observe the request,
+        // rather than assuming a fixed number of event turns completed them.
+        await requestSent.future.timeout(const Duration(seconds: 5));
         expect(sent, hasLength(1));
         final request = sent.single;
         expect(request.deviceId, _phone);
