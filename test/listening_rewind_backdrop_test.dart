@@ -126,6 +126,8 @@ void main() {
   late ValueNotifier<bool> tickers;
 
   setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     reduced = ValueNotifier(false);
     tickers = ValueNotifier(true);
   });
