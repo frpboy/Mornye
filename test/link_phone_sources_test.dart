@@ -791,9 +791,15 @@ void main() {
         File(cached).writeAsStringSync('cached audio');
         tags[cached] = {'title': 'Cached', 'lyrics': ''};
         final phone = sources(lyricsTimeout: const Duration(seconds: 5));
+        addTearDown(phone.close);
+        final requestSent = Completer<void>();
+        sendOverride = (_, _) async {
+          if (!requestSent.isCompleted) requestSent.complete();
+          return delivered;
+        };
         final first = phone.metadata(sourceId, name);
         final second = phone.metadata(sourceId, name);
-        await pumpEventQueue();
+        await requestSent.future.timeout(const Duration(seconds: 5));
         expect(sent, hasLength(1));
         final reply = {
           'type': LinkMessageTypes.filesLyrics,
@@ -812,6 +818,11 @@ void main() {
           expect(result['lyrics'], '[00:01]Original phone lyrics');
           expect(result['title'], 'Cached');
         }
+        expect(
+          sent,
+          hasLength(1),
+          reason: 'both reads share one lyrics request',
+        );
       },
     );
 
