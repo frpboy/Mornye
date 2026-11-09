@@ -379,6 +379,9 @@ jobs:
           sha256sum build/app/outputs/flutter-apk/*release.apk > build/symbols/android/apk-sha256.txt
 
       - name: Retain Android debug symbols
+        # Public repo: PR-run artifacts are downloadable by any logged-in GitHub user.
+        # Keep uploads off pull_request runs; push/dispatch behavior unchanged.
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: android-symbols-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}

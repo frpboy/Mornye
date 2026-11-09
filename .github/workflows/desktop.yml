@@ -148,6 +148,9 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$app" build/desktop/Mornye-macos-universal.zip
 
       - name: Upload macOS app artifact
+        # Public repo: PR-run artifacts are downloadable by any logged-in GitHub user.
+        # Keep uploads off pull_request runs; push/dispatch behavior unchanged.
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-macos
@@ -282,6 +285,9 @@ jobs:
           (cd "$bundle" && zip -r -y "$GITHUB_WORKSPACE/build/desktop/Mornye-linux-${{ matrix.flutter_arch }}.zip" .)
 
       - name: Upload Linux bundle artifact
+        # Public repo: PR-run artifacts are downloadable by any logged-in GitHub user.
+        # Keep uploads off pull_request runs; push/dispatch behavior unchanged.
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-linux-${{ matrix.flutter_arch }}
@@ -391,6 +397,9 @@ jobs:
           Compress-Archive -Path "$bundle\*" -DestinationPath build\desktop\Mornye-windows-${{ matrix.arch }}.zip -Force
 
       - name: Upload Windows app artifact
+        # Public repo: PR-run artifacts are downloadable by any logged-in GitHub user.
+        # Keep uploads off pull_request runs; push/dispatch behavior unchanged.
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-windows-${{ matrix.arch }}
