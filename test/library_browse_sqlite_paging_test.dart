@@ -27,160 +27,171 @@ class _Local extends LocalLibraryNotifier {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  late SqliteProcessDatabase db;
-  late LibraryQueueStore store;
-  setUp(() async {
-    db = await SqliteProcessDatabase.open();
-    store = await createLibraryPagingFixture(db);
-  });
-  tearDown(() => db.close());
+  group('mutable index refresh', () {
+    late SqliteProcessDatabase db;
+    late LibraryQueueStore store;
+    setUp(() async {
+      db = await SqliteProcessDatabase.open();
+      store = await createLibraryPagingFixture(db);
+    });
+    tearDown(() => db.close());
 
-  test(
-    'index refresh restores retained albums with bounded larger reads',
-    () async {
-      const request = (
+    test(
+      'index refresh restores retained albums with bounded larger reads',
+      () async {
+        const request = (
+          artists: false,
+          sort: 'a-z',
+          search: '',
+          artist: null,
+          completeness: null,
+          limit: 40,
+        );
+        final reads = <LibraryBrowsePageRequest>[];
+        var returned = 0;
+        final container = ProviderContainer(
+          overrides: [
+            settingsProvider.overrideWith(
+              () => FixedSettingsNotifier(
+                const AppSettings(localLibraryEnabled: true),
+              ),
+            ),
+            downloadHistoryProvider.overrideWith(_History.new),
+            localLibraryProvider.overrideWith(_Local.new),
+            libraryBrowsePageLoaderProvider.overrideWithValue((page) async {
+              reads.add(page);
+              final result = await readLibraryPagingFixture(store, page);
+              returned += result.entries.length;
+              return result;
+            }),
+          ],
+        );
+        addTearDown(container.dispose);
+        final provider = libraryBrowseProvider(request);
+        container.listen(provider, (_, _) {});
+        await container.read(provider.future);
+        final notifier = container.read(provider.notifier);
+        while (container.read(provider).requireValue.entries.length < 1000) {
+          await notifier.loadMore();
+        }
+        await db.rawUpdate(
+          'UPDATE library SET album_name=? WHERE album_key=?',
+          ['Fresh album', 'album 0000|artist 0000'],
+        );
+        reads.clear();
+        returned = 0;
+        (container.read(downloadHistoryProvider.notifier) as _History).revise();
+        final refreshed = await container.read(provider.future);
+        final expected = await readLibraryPagingFixture(store, (
+          browse: (
+            artists: false,
+            sort: 'a-z',
+            search: '',
+            artist: null,
+            completeness: null,
+            limit: 2000,
+          ),
+          offset: 0,
+          cursor: null,
+          includeLocal: true,
+        ));
+        expect(
+          libraryPagingIdentities(refreshed.entries),
+          libraryPagingIdentities(expected.entries),
+        );
+        expect(
+          refreshed.entries.map((entry) => entry.name),
+          expected.entries.map((entry) => entry.name),
+        );
+        expect(
+          refreshed.entries.any((entry) => entry.name == 'Fresh album'),
+          true,
+        );
+        expect(
+          returned,
+          1000,
+          reason: 'refresh transfers each retained row once',
+        );
+        expect(reads.map((page) => page.offset), [0, 200, 400, 600, 800]);
+        expect(reads.every((page) => page.browse.limit == 200), true);
+        expect(reads.skip(1).every((page) => page.cursor != null), true);
+
+        await notifier.loadMore();
+        expect(reads.last.browse.limit, 40);
+        expect(reads.last.offset, 1000);
+        expect(reads.last.cursor, isNotNull);
+        expect(container.read(provider).requireValue.entries, hasLength(1000));
+        expect(container.read(provider).requireValue.hasMore, false);
+      },
+    );
+  });
+
+  group('1000 albums preserve source ties, dedup, filters and order on paging', () {
+    late SqliteProcessDatabase db;
+    late LibraryQueueStore store;
+    // Scenarios only read this fixture. The mutable refresh test above has its
+    // own database; every scenario below creates and disposes its own providers.
+    setUpAll(() async {
+      db = await SqliteProcessDatabase.open();
+      store = await createLibraryPagingFixture(db);
+    });
+    tearDownAll(() => db.close());
+    final scenarios = [
+      (
         artists: false,
         sort: 'a-z',
         search: '',
         artist: null,
         completeness: null,
-        limit: 40,
-      );
-      final reads = <LibraryBrowsePageRequest>[];
-      var returned = 0;
-      final container = ProviderContainer(
-        overrides: [
-          settingsProvider.overrideWith(
-            () => FixedSettingsNotifier(
-              const AppSettings(localLibraryEnabled: true),
-            ),
-          ),
-          downloadHistoryProvider.overrideWith(_History.new),
-          localLibraryProvider.overrideWith(_Local.new),
-          libraryBrowsePageLoaderProvider.overrideWithValue((page) async {
-            reads.add(page);
-            final result = await readLibraryPagingFixture(store, page);
-            returned += result.entries.length;
-            return result;
-          }),
-        ],
-      );
-      addTearDown(container.dispose);
-      final provider = libraryBrowseProvider(request);
-      container.listen(provider, (_, _) {});
-      await container.read(provider.future);
-      final notifier = container.read(provider.notifier);
-      while (container.read(provider).requireValue.entries.length < 1000) {
-        await notifier.loadMore();
-      }
-      await db.rawUpdate('UPDATE library SET album_name=? WHERE album_key=?', [
-        'Fresh album',
-        'album 0000|artist 0000',
-      ]);
-      reads.clear();
-      returned = 0;
-      (container.read(downloadHistoryProvider.notifier) as _History).revise();
-      final refreshed = await container.read(provider.future);
-      final expected = await readLibraryPagingFixture(store, (
-        browse: (
-          artists: false,
-          sort: 'a-z',
-          search: '',
-          artist: null,
-          completeness: null,
-          limit: 2000,
-        ),
-        offset: 0,
-        cursor: null,
-        includeLocal: true,
-      ));
-      expect(
-        libraryPagingIdentities(refreshed.entries),
-        libraryPagingIdentities(expected.entries),
-      );
-      expect(
-        refreshed.entries.map((entry) => entry.name),
-        expected.entries.map((entry) => entry.name),
-      );
-      expect(
-        refreshed.entries.any((entry) => entry.name == 'Fresh album'),
-        true,
-      );
-      expect(
-        returned,
-        1000,
-        reason: 'refresh transfers each retained row once',
-      );
-      expect(reads.map((page) => page.offset), [0, 200, 400, 600, 800]);
-      expect(reads.every((page) => page.browse.limit == 200), true);
-      expect(reads.skip(1).every((page) => page.cursor != null), true);
-
-      await notifier.loadMore();
-      expect(reads.last.browse.limit, 40);
-      expect(reads.last.offset, 1000);
-      expect(reads.last.cursor, isNotNull);
-      expect(container.read(provider).requireValue.entries, hasLength(1000));
-      expect(container.read(provider).requireValue.hasMore, false);
-    },
-  );
-
-  test(
-    '1000 albums preserve source ties, dedup, filters and order on paging',
-    () async {
-      final elapsed = Stopwatch()..start();
-      var scenarioNumber = 0;
-      for (final scenario in [
-        (
-          artists: false,
-          sort: 'a-z',
-          search: '',
-          artist: null,
-          completeness: null,
-        ),
-        (
-          artists: false,
-          sort: 'latest',
-          search: '',
-          artist: null,
-          completeness: null,
-        ),
-        (
-          artists: true,
-          sort: 'a-z',
-          search: '',
-          artist: null,
-          completeness: null,
-        ),
-        (
-          artists: false,
-          sort: 'a-z',
-          search: 'Album 00',
-          artist: null,
-          completeness: null,
-        ),
-        (
-          artists: false,
-          sort: 'latest',
-          search: '',
-          artist: 'Artist 0001',
-          completeness: null,
-        ),
-        (
-          artists: false,
-          sort: 'a-z',
-          search: '',
-          artist: null,
-          completeness: incompleteAlbumFilter,
-        ),
-        (
-          artists: false,
-          sort: 'latest',
-          search: 'Album',
-          artist: null,
-          completeness: unknownAlbumCompletenessFilter,
-        ),
-      ]) {
-        scenarioNumber++;
+      ),
+      (
+        artists: false,
+        sort: 'latest',
+        search: '',
+        artist: null,
+        completeness: null,
+      ),
+      (
+        artists: true,
+        sort: 'a-z',
+        search: '',
+        artist: null,
+        completeness: null,
+      ),
+      (
+        artists: false,
+        sort: 'a-z',
+        search: 'Album 00',
+        artist: null,
+        completeness: null,
+      ),
+      (
+        artists: false,
+        sort: 'latest',
+        search: '',
+        artist: 'Artist 0001',
+        completeness: null,
+      ),
+      (
+        artists: false,
+        sort: 'a-z',
+        search: '',
+        artist: null,
+        completeness: incompleteAlbumFilter,
+      ),
+      (
+        artists: false,
+        sort: 'latest',
+        search: 'Album',
+        artist: null,
+        completeness: unknownAlbumCompletenessFilter,
+      ),
+    ];
+    for (var index = 0; index < scenarios.length; index++) {
+      final scenario = scenarios[index];
+      final scenarioNumber = index + 1;
+      test('scenario $scenarioNumber/7: $scenario', () async {
+        final elapsed = Stopwatch()..start();
         var diagnosticLines = 0;
         void phase(String label) {
           // Fixed synthetic phase/size/timing fields only, bounded per scenario.
@@ -296,7 +307,7 @@ void main() {
         } finally {
           container.dispose();
         }
-      }
-    },
-  );
+      });
+    }
+  });
 }

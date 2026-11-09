@@ -219,13 +219,13 @@ void _expectTranslucentComposition(
     physical.height.toInt(),
     'legacy faded lower composition',
   );
-  // The last direct row and the masked edge-crossing row lie in the fully
-  // opaque plateau. Both must still agree with the unsplit direct oracle.
+  // Compare only genuine direct rows with the unsplit direct oracle. The
+  // masked safety row belongs to the lower legacy oracle, even on its plateau.
   rows(
     direct,
-    maskedStartRow - 1,
-    firstFadedRow,
-    'plateau on both sides of the split',
+    math.max(0, maskedStartRow - 2),
+    maskedStartRow,
+    'direct plateau immediately above the split',
   );
   rows(wholeMask, firstFadedRow - 1, firstFadedRow + 2, 'fade onset and seam');
 }
