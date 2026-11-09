@@ -21,8 +21,8 @@ DownloadStatus downloadQueuePersistenceStatus(
   DownloadStatus.queued || DownloadStatus.downloading
       when errorType == DownloadErrorType.verificationRequired =>
     DownloadStatus.failed,
-  DownloadStatus.downloading || DownloadStatus.finalizing =>
-    DownloadStatus.queued,
+  DownloadStatus.downloading ||
+  DownloadStatus.finalizing => DownloadStatus.queued,
   _ => status,
 };
 
