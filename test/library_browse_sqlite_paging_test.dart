@@ -127,6 +127,8 @@ void main() {
   test(
     '1000 albums preserve source ties, dedup, filters and order on paging',
     () async {
+      final elapsed = Stopwatch()..start();
+      var scenarioNumber = 0;
       for (final scenario in [
         (
           artists: false,
@@ -178,6 +180,18 @@ void main() {
           completeness: unknownAlbumCompletenessFilter,
         ),
       ]) {
+        scenarioNumber++;
+        var diagnosticLines = 0;
+        void phase(String label) {
+          // Fixed synthetic phase/size/timing fields only, bounded per scenario.
+          if (diagnosticLines++ >= 128) return;
+          printOnFailure(
+            'paging scenario=$scenarioNumber/7 '
+            'elapsed_ms=${elapsed.elapsedMilliseconds} $label',
+          );
+        }
+
+        phase('begin');
         final request = (
           artists: scenario.artists,
           sort: scenario.sort,
@@ -199,7 +213,11 @@ void main() {
             localLibraryProvider.overrideWith(_Local.new),
             libraryBrowsePageLoaderProvider.overrideWithValue((page) async {
               reads.add(page);
+              phase(
+                'query-start offset=${page.offset} limit=${page.browse.limit}',
+              );
               final result = await readLibraryPagingFixture(store, page);
+              phase('query-done rows=${result.entries.length}');
               returned += result.entries.length;
               return result;
             }),
@@ -208,13 +226,16 @@ void main() {
         try {
           final provider = libraryBrowseProvider(request);
           container.listen(provider, (_, _) {});
+          phase('initial-start');
           await container.read(provider.future);
+          phase('initial-done');
           final notifier = container.read(provider.notifier);
           while (container.read(provider).requireValue.hasMore) {
             await notifier.loadMore();
             expect(container.read(provider).requireValue.loadMoreError, isNull);
           }
           final actual = container.read(provider).requireValue.entries;
+          phase('expected-start limit=2000');
           final expected = await readLibraryPagingFixture(store, (
             browse: (
               artists: request.artists,
@@ -228,6 +249,7 @@ void main() {
             cursor: null,
             includeLocal: true,
           ));
+          phase('expected-done rows=${expected.entries.length}');
           expect(
             libraryPagingIdentities(actual),
             libraryPagingIdentities(expected.entries),
@@ -257,7 +279,9 @@ void main() {
           returned = 0;
           (container.read(downloadHistoryProvider.notifier) as _History)
               .revise();
+          phase('refresh-start');
           final refreshed = await container.read(provider.future);
+          phase('refresh-done rows=${refreshed.entries.length}');
           expect(
             libraryPagingIdentities(refreshed.entries),
             libraryPagingIdentities(expected.entries),
@@ -268,6 +292,7 @@ void main() {
           if (actual.length >= 200) {
             expect(reads.length, (actual.length / 200).ceil());
           }
+          phase('complete');
         } finally {
           container.dispose();
         }
