@@ -182,6 +182,8 @@ void main() {
 
       await repository.update(objects[12].copyWith(eTag: '"new"'));
       await _until(() => writes.count == 2, 'the update save');
+      // The counter observes temporary-file creation, not the final rename.
+      await repository.flush();
       expect(encoded, 31);
       final touchedRows = {
         for (final row in _rows(file)) row['_id'] as int: row['touched'],
