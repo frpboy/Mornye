@@ -244,7 +244,9 @@ void main() {
         await checkParity(contents);
         await checkParity(Directory('${root.path}/root-link'));
       },
-      skip: Platform.isWindows
+      skip: !enabled
+          ? 'No native backend library provided'
+          : Platform.isWindows
           ? 'Creating symlinks requires Windows developer permissions'
           : false,
     );
