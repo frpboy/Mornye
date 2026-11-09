@@ -146,12 +146,18 @@ jobs:
       - name: Install media test tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg python3-cryptography
           ffmpeg -version
           ffprobe -version
 
       - name: Run tests
+        env:
+          MORNYE_SYNTHETIC_EVIDENCE_DIR: ${{ github.event_name == 'pull_request' && format('{0}/mornye-synthetic-evidence', runner.temp) || '' }}
         run: flutter test
+
+      - name: Encrypt bounded synthetic visual evidence
+        if: always() && github.event_name == 'pull_request'
+        run: python3 scripts/encrypt_synthetic_evidence.py
 
   rust:
     name: Rust checks & Android libraries

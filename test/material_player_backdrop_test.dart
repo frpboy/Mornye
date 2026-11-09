@@ -13,6 +13,8 @@ import 'package:mornye/routes/now_playing_route.dart';
 import 'package:mornye/widgets/material_player_backdrop.dart';
 import 'package:mornye/widgets/player_artwork.dart';
 
+import 'support/synthetic_visual_evidence.dart';
+
 const _key = ValueKey('backdrop');
 final _cached = find.byWidgetPredicate(
   (widget) => widget is RawImage && widget.fit == BoxFit.fill,
@@ -482,9 +484,16 @@ void main() {
           return _capture(tester, dpr);
         }
 
+        final band = await capture(_bandMask);
+        final reference = await capture(_wholeBoxMask);
+        if (physical == const Size(160, 320) &&
+            dpr == 1 &&
+            cover == _translucent) {
+          await captureSyntheticBand(tester, band, reference);
+        }
         _expectRounding(
-          await capture(_bandMask),
-          await capture(_wholeBoxMask),
+          band,
+          reference,
           opaque: cover != _translucent,
           reason: cover.path,
         );

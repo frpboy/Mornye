@@ -9,6 +9,8 @@ import 'package:mornye/theme/app_theme.dart';
 import 'package:mornye/theme/mornye_theme.dart';
 import 'package:mornye/widgets/desktop/desktop_commands.dart';
 
+import 'support/synthetic_visual_evidence.dart';
+
 class _Settings extends SettingsNotifier {
   @override
   AppSettings build() => const AppSettings();
@@ -33,11 +35,19 @@ void main() {
                   : AppTheme.light(),
               localizationsDelegates: AppLocalizations.localizationsDelegates,
               supportedLocales: AppLocalizations.supportedLocales,
-              home: KeyboardShortcutsPage(platform: platform),
+              home: RepaintBoundary(
+                key: const ValueKey('keyboard-synthetic-capture'),
+                child: KeyboardShortcutsPage(platform: platform),
+              ),
             ),
           ),
         );
         await tester.pumpAndSettle();
+        await captureSyntheticKeyboard(
+          tester,
+          find.byKey(const ValueKey('keyboard-synthetic-capture')),
+          'keyboard-${mornye ? 'mornye' : 'material'}-${platform.name}.png',
+        );
 
         final shown = tester
             .widgetList<Text>(find.byType(Text))
