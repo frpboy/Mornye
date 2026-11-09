@@ -29,6 +29,61 @@ void main() {
       path: '${directory.path}/local_library.db',
     );
     await createNativeLibraryFixture(db);
+    // History table the queue store now reads; column list mirrors
+    // HistorySchema.create in lib/services/history_schema.dart.
+    await db.execute('''
+      CREATE TABLE history_db.history (
+        id TEXT PRIMARY KEY,
+        track_name TEXT NOT NULL,
+        artist_name TEXT NOT NULL,
+        album_name TEXT NOT NULL,
+        album_artist TEXT,
+        cover_url TEXT,
+        file_path TEXT NOT NULL,
+        origin_file_path TEXT,
+        storage_mode TEXT,
+        download_tree_uri TEXT,
+        saf_relative_dir TEXT,
+        saf_file_name TEXT,
+        saf_repaired INTEGER,
+        service TEXT NOT NULL,
+        downloaded_at TEXT NOT NULL,
+        isrc TEXT,
+        spotify_id TEXT,
+        track_number INTEGER,
+        total_tracks INTEGER,
+        disc_number INTEGER,
+        total_discs INTEGER,
+        duration INTEGER,
+        release_date TEXT,
+        quality TEXT,
+        bit_depth INTEGER,
+        sample_rate INTEGER,
+        bitrate INTEGER,
+        format TEXT,
+        genre TEXT,
+        composer TEXT,
+        label TEXT,
+        copyright TEXT,
+        explicit INTEGER NOT NULL DEFAULT 0,
+        has_lyrics INTEGER NOT NULL DEFAULT 0,
+        lyrics_metadata_scan_version INTEGER NOT NULL DEFAULT 0,
+        has_replaygain INTEGER NOT NULL DEFAULT 0,
+        replaygain_metadata_scan_version INTEGER NOT NULL DEFAULT 0,
+        spotify_id_norm TEXT,
+        isrc_norm TEXT,
+        match_key TEXT,
+        album_key TEXT,
+        search_text TEXT,
+        sort_track TEXT,
+        sort_artist TEXT,
+        sort_album TEXT,
+        sort_album_artist TEXT,
+        sort_genre TEXT,
+        sort_release TEXT,
+        sort_added INTEGER
+      )
+    ''');
     cue = await File(
       '${directory.path}/Album.cue',
     ).writeAsString('Original CUE');
