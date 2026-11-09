@@ -16,11 +16,20 @@ final _log = AppLogger('AppSqlite');
 
 var _ffiDatabaseFactoryInstalled = false;
 
+/// Overrides the database transport in widget fixtures without changing layout.
+@visibleForTesting
+DatabaseFactory? debugAppDatabaseFactory;
+
 /// Routes sqflite through FFI and the bundled SQLite on Windows and Linux,
 /// which have no sqflite platform plugin. Mobile and macOS keep the plugin.
 /// Every app database open goes through [openAppDatabase] first, so later
 /// direct `openDatabase` calls also see this factory.
 void ensureAppDatabaseFactory() {
+  final override = debugAppDatabaseFactory;
+  if (override != null) {
+    if (!identical(databaseFactoryOrNull, override)) databaseFactory = override;
+    return;
+  }
   if (_ffiDatabaseFactoryInstalled || !isDesktopPlatform || Platform.isMacOS) {
     return;
   }

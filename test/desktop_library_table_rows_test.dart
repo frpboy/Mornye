@@ -16,6 +16,7 @@ import 'package:mornye/providers/settings_provider.dart';
 import 'package:mornye/screens/queue_tab.dart';
 import 'package:mornye/services/history_database.dart';
 import 'package:mornye/services/library_database.dart';
+import 'package:mornye/services/sqlite_helpers.dart' as sqlite;
 import 'package:mornye/theme/app_theme.dart';
 import 'package:mornye/utils/desktop_platform.dart';
 import 'package:mornye/widgets/desktop/track_table.dart';
@@ -131,6 +132,9 @@ void main() {
     _renamed.clear();
     SharedPreferences.setMockInitialValues({});
     final previousFactory = databaseFactoryOrNull;
+    final previousOverride = sqlite.debugAppDatabaseFactory;
+    sqlite.debugAppDatabaseFactory = databaseFactorySqflitePlugin;
+    addTearDown(() => sqlite.debugAppDatabaseFactory = previousOverride);
     databaseFactory = databaseFactorySqflitePlugin;
     addTearDown(() => databaseFactory = previousFactory);
     final messenger =
