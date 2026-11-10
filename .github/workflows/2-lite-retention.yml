@@ -1,0 +1,249 @@
+# PROPOSAL v5 - not pushed, not dispatched. Awaits independent review of the v5 diff.
+# Variant B: workflow_dispatch-only Lite build; uploads APKs ONLY to a pre-existing
+# owner-created DRAFT release, then re-downloads each asset through the API and
+# re-hashes (authenticated roundtrip). This workflow can NEVER create, publish, tag,
+# or delete a release. Test-key build only; no production signing identity.
+# Hard rules: no v* tag, no secrets beyond GITHUB_TOKEN, no Discord SDK, fail closed
+# on any identity mismatch, duplicate asset names STOP the run (no clobber/no delete).
+# v5: source identity is NOT embedded in this file (embedding it would drift on every
+# landing). The four expected_* inputs carry the independently reviewed identity
+# values; the gate checks live refs against them with exact equality + parent lineage.
+name: Lite APK retention (draft upload only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft_tag:
+        description: "Exact tag of the owner-pre-created DRAFT release (must match ^lite-qual-[A-Za-z0-9._-]+$)"
+        required: true
+        type: string
+      expected_main:
+        description: "Reviewed refs/heads/main SHA at dispatch time (40-hex)"
+        required: true
+        type: string
+      expected_pr_head:
+        description: "Reviewed PR15 head SHA (40-hex)"
+        required: true
+        type: string
+      expected_pr_merge:
+        description: "Reviewed refs/pull/15/merge SHA (40-hex; ignored if PR head already in main)"
+        required: true
+        type: string
+      expected_tree:
+        description: "Reviewed tree SHA of the exact source to build (40-hex)"
+        required: true
+        type: string
+
+permissions:
+  contents: write # asset upload + readback on the existing draft only
+
+env:
+  MORNYE_DISCORD_SDK: "0"
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      # Inputs reach scripts ONLY via env, full-regex validated (Z4X mandatory fix).
+      - name: Gate on inputs and the exact pre-existing owner draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRAFT_TAG: ${{ inputs.draft_tag }}
+          EXPECTED_MAIN: ${{ inputs.expected_main }}
+          EXPECTED_PR_HEAD: ${{ inputs.expected_pr_head }}
+          EXPECTED_PR_MERGE: ${{ inputs.expected_pr_merge }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DRAFT_TAG" =~ ^lite-qual-[A-Za-z0-9._-]+$ ]]; then
+            echo "draft_tag must match ^lite-qual-[A-Za-z0-9._-]+$ (never a v* name)"; exit 1
+          fi
+          for v in EXPECTED_MAIN EXPECTED_PR_HEAD EXPECTED_PR_MERGE EXPECTED_TREE; do
+            if [[ ! "${!v}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "$v must be a full lowercase 40-hex git SHA"; exit 1
+            fi
+          done
+          json="$(gh api "repos/${{ github.repository }}/releases/tags/$DRAFT_TAG")" || {
+            echo "No release found for tag $DRAFT_TAG - this workflow never creates one"; exit 1; }
+          [ "$(jq -r .draft <<<"$json")" = "true" ] || { echo "release is not a draft"; exit 1; }
+          [ "$(jq -r .prerelease <<<"$json")" = "true" ] || { echo "release must be prerelease"; exit 1; }
+          target="$(jq -r .target_commitish <<<"$json")"
+          if [ "$target" != "$EXPECTED_PR_MERGE" ] && [ "$target" != "$EXPECTED_MAIN" ]; then
+            echo "draft targets unexpected commit: $target"; exit 1
+          fi
+          echo "release_id=$(jq -r .id <<<"$json")" >> "$GITHUB_ENV"
+          echo "Draft gate OK: id=$(jq -r .id <<<"$json") target=$target"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost /usr/share/swift /usr/local/.ghcup
+          df -h
+
+      # persist-credentials: false - build code must not read the contents:write token
+      # from .git/config; all API access goes through GH_TOKEN env explicitly.
+      - name: Checkout (full history for lineage checks)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (SHA->tag verified)
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact source identity (fail closed)
+        env:
+          EXPECTED_MAIN: ${{ inputs.expected_main }}
+          EXPECTED_PR_HEAD: ${{ inputs.expected_pr_head }}
+          EXPECTED_PR_MERGE: ${{ inputs.expected_pr_merge }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+        run: |
+          set -euo pipefail
+          for v in EXPECTED_MAIN EXPECTED_PR_HEAD EXPECTED_PR_MERGE EXPECTED_TREE; do
+            if [[ ! "${!v}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "$v must be a full lowercase 40-hex git SHA"; exit 1
+            fi
+          done
+          git fetch origin main
+          git fetch origin refs/pull/15/head:refs/remotes/qualified/pr15-head
+          git fetch origin refs/pull/15/merge:refs/remotes/qualified/pr15-merge
+          ACTUAL_MAIN="$(git rev-parse origin/main)"
+          [ "$ACTUAL_MAIN" = "$EXPECTED_MAIN" ] || { echo "main drift: $ACTUAL_MAIN"; exit 1; }
+          ACTUAL_HEAD="$(git rev-parse refs/remotes/qualified/pr15-head)"
+          [ "$ACTUAL_HEAD" = "$EXPECTED_PR_HEAD" ] || { echo "PR head drift: $ACTUAL_HEAD"; exit 1; }
+          if git merge-base --is-ancestor "$EXPECTED_PR_HEAD" origin/main; then
+            # PR already merged: the qualified source is main itself (private qualification only).
+            git checkout --detach origin/main
+          else
+            ACTUAL_MERGE="$(git rev-parse refs/remotes/qualified/pr15-merge)"
+            [ "$ACTUAL_MERGE" = "$EXPECTED_PR_MERGE" ] || { echo "PR merge SHA drift: $ACTUAL_MERGE"; exit 1; }
+            # Explicit lineage: merge commit parents must be exactly (EXPECTED_MAIN, EXPECTED_PR_HEAD).
+            [ "$(git rev-parse "$EXPECTED_PR_MERGE^1")" = "$EXPECTED_MAIN" ] || { echo "merge base parent mismatch"; exit 1; }
+            [ "$(git rev-parse "$EXPECTED_PR_MERGE^2")" = "$EXPECTED_PR_HEAD" ] || { echo "merge head parent mismatch"; exit 1; }
+            git checkout --detach "$EXPECTED_PR_MERGE"
+          fi
+          ACTUAL_TREE="$(git rev-parse 'HEAD^{tree}')"
+          [ "$ACTUAL_TREE" = "$EXPECTED_TREE" ] || { echo "tree mismatch: $ACTUAL_TREE"; exit 1; }
+          echo "Source identity OK: $(git rev-parse HEAD) tree $ACTUAL_TREE"
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1 (SHA->tag verified)
+        with:
+          distribution: "temurin"
+          java-version: "25"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2 (SHA->tag verified)
+        with:
+          channel: "stable"
+          flutter-version-file: .fvmrc
+          cache: true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0 (SHA->annotated tag verified)
+        with:
+          gradle-version: "9.8.2"
+          gradle-home-cache-includes: |
+            caches/modules-2
+            notifications
+
+      - name: Install Android SDK & NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;30.0.16248370" "platforms;android-37.0" "build-tools;37.0.0" "cmake;4.1.2"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+
+      - name: Flutter dependencies
+        run: |
+          flutter pub get
+          echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
+
+      - name: Build Lite release APKs (no Discord SDK, Gradle test key)
+        run: bash scripts/build_android.sh --lite --target lib/main.dart
+
+      - name: Verify APK payloads, signatures, and record signer fingerprint
+        run: |
+          set -euo pipefail
+          for abi in arm64-v8a armeabi-v7a; do
+            python3 scripts/check_backend_apk.py \
+              "build/app/outputs/flutter-apk/app-${abi}-release.apk" --backend rust --abis "$abi"
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose \
+              "build/app/outputs/flutter-apk/app-${abi}-release.apk"
+          done
+          python3 scripts/check_backend_apk.py \
+            build/app/outputs/flutter-apk/app-release.apk --backend rust --abis arm64-v8a,armeabi-v7a
+          mkdir -p build/manifest
+          for abi in arm64-v8a armeabi-v7a; do
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs \
+              "build/app/outputs/flutter-apk/app-${abi}-release.apk" \
+              > "build/manifest/certs-${abi}.txt"
+          done
+
+      - name: Provenance manifest
+        run: |
+          set -euo pipefail
+          mkdir -p build/manifest
+          git rev-parse HEAD > build/manifest/commit.txt
+          sha256sum build/app/outputs/flutter-apk/*release.apk > build/manifest/apk-sha256.txt
+          {
+            echo "mornye Lite qualification build (draft retention)"
+            echo "source: $(git rev-parse HEAD) tree $(git rev-parse 'HEAD^{tree}')"
+            echo "runner: ${{ github.run_id }} attempt ${{ github.run_attempt }}"
+            echo "signing: Gradle TEST key (not a durable release identity; see certs-*.txt)"
+            echo "features: Lite build, MORNYE_DISCORD_SDK=0 (no Discord rich presence)"
+          } > build/manifest/BUILD-INFO.txt
+
+      - name: Duplicate-asset preflight (stop on any collision; no clobber, no delete)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # --paginate: a collision beyond the first API page must not be hidden.
+          existing="$(gh api --paginate "repos/${{ github.repository }}/releases/${release_id}/assets" --jq '.[].name')"
+          want="app-arm64-v8a-release.apk app-armeabi-v7a-release.apk app-release.apk commit.txt apk-sha256.txt BUILD-INFO.txt certs-arm64-v8a.txt certs-armeabi-v7a.txt"
+          for f in $want; do
+            if grep -qx "$f" <<<"$existing"; then
+              echo "Asset already exists on draft: $f - STOPPING (no overwrite, no delete)"; exit 1
+            fi
+          done
+          echo "No asset name collisions"
+
+      - name: Upload APKs + manifest to the existing draft (fails if release missing)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRAFT_TAG: ${{ inputs.draft_tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$DRAFT_TAG" \
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
+            build/app/outputs/flutter-apk/app-release.apk \
+            build/manifest/commit.txt \
+            build/manifest/apk-sha256.txt \
+            build/manifest/BUILD-INFO.txt \
+            build/manifest/certs-arm64-v8a.txt \
+            build/manifest/certs-armeabi-v7a.txt
+          # no --clobber anywhere; a duplicate name fails this step
+
+      # Authenticated download roundtrip for the 3 APKs (text manifests excluded).
+      - name: Download-verify uploaded APKs (rehash vs local)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/readback
+          # --paginate: find the asset id even beyond the first API page.
+          asset_map="$(gh api --paginate "repos/${{ github.repository }}/releases/${release_id}/assets" \
+            --jq '.[] | .name + " " + (.id | tostring)')"
+          while read -r hash file; do
+            name="$(basename "$file")"
+            asset_id="$(awk -v n="$name" '$1 == n {print $2}' <<<"$asset_map")"
+            [ -n "$asset_id" ] || { echo "uploaded asset missing: $name"; exit 1; }
+            gh api "repos/${{ github.repository }}/releases/assets/$asset_id" \
+              -H "Accept: application/octet-stream" > "/tmp/readback/$name"
+            actual="$(sha256sum "/tmp/readback/$name" | cut -d' ' -f1)"
+            [ "$actual" = "$hash" ] || { echo "READBACK MISMATCH $name: $actual != $hash"; exit 1; }
+            echo "readback OK: $name $hash"
+          done < build/manifest/apk-sha256.txt
+          echo "APK download roundtrip verified (3 APKs; text manifests are not roundtrip-hashed)"
+
+      - name: Report
+        run: echo "Draft upload + readback complete. No publish. Custody stays in the private draft."
