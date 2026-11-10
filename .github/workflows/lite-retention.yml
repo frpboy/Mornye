@@ -1,10 +1,13 @@
-# PROPOSAL v4 - not pushed, not dispatched. Awaits independent review of the v4 diff.
+# PROPOSAL v5 - not pushed, not dispatched. Awaits independent review of the v5 diff.
 # Variant B: workflow_dispatch-only Lite build; uploads APKs ONLY to a pre-existing
 # owner-created DRAFT release, then re-downloads each asset through the API and
 # re-hashes (authenticated roundtrip). This workflow can NEVER create, publish, tag,
 # or delete a release. Test-key build only; no production signing identity.
 # Hard rules: no v* tag, no secrets beyond GITHUB_TOKEN, no Discord SDK, fail closed
 # on any identity mismatch, duplicate asset names STOP the run (no clobber/no delete).
+# v5: source identity is NOT embedded in this file (embedding it would drift on every
+# landing). The four expected_* inputs carry the independently reviewed identity
+# values; the gate checks live refs against them with exact equality + parent lineage.
 name: Lite APK retention (draft upload only)
 
 on:
@@ -14,31 +17,52 @@ on:
         description: "Exact tag of the owner-pre-created DRAFT release (must match ^lite-qual-[A-Za-z0-9._-]+$)"
         required: true
         type: string
+      expected_main:
+        description: "Reviewed refs/heads/main SHA at dispatch time (40-hex)"
+        required: true
+        type: string
+      expected_pr_head:
+        description: "Reviewed PR15 head SHA (40-hex)"
+        required: true
+        type: string
+      expected_pr_merge:
+        description: "Reviewed refs/pull/15/merge SHA (40-hex; ignored if PR head already in main)"
+        required: true
+        type: string
+      expected_tree:
+        description: "Reviewed tree SHA of the exact source to build (40-hex)"
+        required: true
+        type: string
 
 permissions:
   contents: write # asset upload + readback on the existing draft only
 
 env:
   MORNYE_DISCORD_SDK: "0"
-  EXPECTED_MAIN: "57d4ddafa4610d1928f2018447d3ced0df7dca18"
-  EXPECTED_PR_HEAD: "0b0ec90724770e7161c61cf2188dee513822b073"
-  EXPECTED_PR_MERGE: "add129c72f10c351eb067ecf33193137cdd22f01"
-  EXPECTED_TREE: "5ec78cba1acee27a0498b994b2f86b83c643595e"
 
 jobs:
   build-and-upload:
     runs-on: ubuntu-latest
     steps:
-      # Input reaches scripts ONLY via env, full-regex validated (Z4X mandatory fix).
-      - name: Gate on the exact pre-existing owner draft
+      # Inputs reach scripts ONLY via env, full-regex validated (Z4X mandatory fix).
+      - name: Gate on inputs and the exact pre-existing owner draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DRAFT_TAG: ${{ inputs.draft_tag }}
+          EXPECTED_MAIN: ${{ inputs.expected_main }}
+          EXPECTED_PR_HEAD: ${{ inputs.expected_pr_head }}
+          EXPECTED_PR_MERGE: ${{ inputs.expected_pr_merge }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
         run: |
           set -euo pipefail
           if [[ ! "$DRAFT_TAG" =~ ^lite-qual-[A-Za-z0-9._-]+$ ]]; then
             echo "draft_tag must match ^lite-qual-[A-Za-z0-9._-]+$ (never a v* name)"; exit 1
           fi
+          for v in EXPECTED_MAIN EXPECTED_PR_HEAD EXPECTED_PR_MERGE EXPECTED_TREE; do
+            if [[ ! "${!v}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "$v must be a full lowercase 40-hex git SHA"; exit 1
+            fi
+          done
           json="$(gh api "repos/${{ github.repository }}/releases/tags/$DRAFT_TAG")" || {
             echo "No release found for tag $DRAFT_TAG - this workflow never creates one"; exit 1; }
           [ "$(jq -r .draft <<<"$json")" = "true" ] || { echo "release is not a draft"; exit 1; }
@@ -56,26 +80,47 @@ jobs:
             /usr/local/share/boost /usr/share/swift /usr/local/.ghcup
           df -h
 
+      # persist-credentials: false - build code must not read the contents:write token
+      # from .git/config; all API access goes through GH_TOKEN env explicitly.
       - name: Checkout (full history for lineage checks)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (SHA->tag verified)
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify exact source identity (fail closed)
+        env:
+          EXPECTED_MAIN: ${{ inputs.expected_main }}
+          EXPECTED_PR_HEAD: ${{ inputs.expected_pr_head }}
+          EXPECTED_PR_MERGE: ${{ inputs.expected_pr_merge }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
         run: |
           set -euo pipefail
+          for v in EXPECTED_MAIN EXPECTED_PR_HEAD EXPECTED_PR_MERGE EXPECTED_TREE; do
+            if [[ ! "${!v}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "$v must be a full lowercase 40-hex git SHA"; exit 1
+            fi
+          done
           git fetch origin main
+          git fetch origin refs/pull/15/head:refs/remotes/qualified/pr15-head
           git fetch origin refs/pull/15/merge:refs/remotes/qualified/pr15-merge
+          ACTUAL_MAIN="$(git rev-parse origin/main)"
+          [ "$ACTUAL_MAIN" = "$EXPECTED_MAIN" ] || { echo "main drift: $ACTUAL_MAIN"; exit 1; }
+          ACTUAL_HEAD="$(git rev-parse refs/remotes/qualified/pr15-head)"
+          [ "$ACTUAL_HEAD" = "$EXPECTED_PR_HEAD" ] || { echo "PR head drift: $ACTUAL_HEAD"; exit 1; }
           if git merge-base --is-ancestor "$EXPECTED_PR_HEAD" origin/main; then
+            # PR already merged: the qualified source is main itself (private qualification only).
             git checkout --detach origin/main
           else
             ACTUAL_MERGE="$(git rev-parse refs/remotes/qualified/pr15-merge)"
             [ "$ACTUAL_MERGE" = "$EXPECTED_PR_MERGE" ] || { echo "PR merge SHA drift: $ACTUAL_MERGE"; exit 1; }
+            # Explicit lineage: merge commit parents must be exactly (EXPECTED_MAIN, EXPECTED_PR_HEAD).
+            [ "$(git rev-parse "$EXPECTED_PR_MERGE^1")" = "$EXPECTED_MAIN" ] || { echo "merge base parent mismatch"; exit 1; }
+            [ "$(git rev-parse "$EXPECTED_PR_MERGE^2")" = "$EXPECTED_PR_HEAD" ] || { echo "merge head parent mismatch"; exit 1; }
             git checkout --detach "$EXPECTED_PR_MERGE"
           fi
           ACTUAL_TREE="$(git rev-parse 'HEAD^{tree}')"
           [ "$ACTUAL_TREE" = "$EXPECTED_TREE" ] || { echo "tree mismatch: $ACTUAL_TREE"; exit 1; }
-          git merge-base --is-ancestor "$EXPECTED_MAIN" HEAD || { echo "main lineage broken"; exit 1; }
           echo "Source identity OK: $(git rev-parse HEAD) tree $ACTUAL_TREE"
 
       - name: Setup Java
@@ -151,7 +196,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          existing="$(gh api "repos/${{ github.repository }}/releases/${release_id}/assets" --jq '.[].name')"
+          # --paginate: a collision beyond the first API page must not be hidden.
+          existing="$(gh api --paginate "repos/${{ github.repository }}/releases/${release_id}/assets" --jq '.[].name')"
           want="app-arm64-v8a-release.apk app-armeabi-v7a-release.apk app-release.apk commit.txt apk-sha256.txt BUILD-INFO.txt certs-arm64-v8a.txt certs-armeabi-v7a.txt"
           for f in $want; do
             if grep -qx "$f" <<<"$existing"; then
@@ -184,10 +230,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/readback
+          # --paginate: find the asset id even beyond the first API page.
+          asset_map="$(gh api --paginate "repos/${{ github.repository }}/releases/${release_id}/assets" \
+            --jq '.[] | .name + " " + (.id | tostring)')"
           while read -r hash file; do
             name="$(basename "$file")"
-            asset_id="$(gh api "repos/${{ github.repository }}/releases/${release_id}/assets" \
-              --jq ".[] | select(.name == \"$name\") | .id")"
+            asset_id="$(awk -v n="$name" '$1 == n {print $2}' <<<"$asset_map")"
             [ -n "$asset_id" ] || { echo "uploaded asset missing: $name"; exit 1; }
             gh api "repos/${{ github.repository }}/releases/assets/$asset_id" \
               -H "Accept: application/octet-stream" > "/tmp/readback/$name"
