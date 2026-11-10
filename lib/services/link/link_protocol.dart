@@ -103,6 +103,9 @@ abstract final class LinkOps {
   static const downloads = 'downloads';
   static const open = 'open';
   static const resolve = 'resolve';
+
+  /// Display tags and a bounded thumbnail for an entry in the host's queue.
+  static const playbackDetails = 'player/details';
   static const libraryJobs = 'library/jobs';
   static const collections = 'collections';
   static const history = 'history';
@@ -133,6 +136,8 @@ abstract final class LinkMessageTypes {
   static const command = 'command';
   static const open = 'open';
   static const downloadsChanged = 'downloads.changed';
+  static const downloadsSubscribe = 'downloads.subscribe';
+  static const downloadsDelta = 'downloads.delta';
   static const collectionsChanged = 'collections.changed';
   static const catalogChanged = 'catalog.changed';
   static const lyricsTranslation = 'lyrics.translation';
@@ -148,6 +153,13 @@ abstract final class LinkMessageTypes {
 
   /// Phone to desktop: `{"requestId","name","lyrics"}` or `{"error"}`.
   static const filesLyrics = 'files.lyrics';
+
+  /// Desktop to phone: delete a shared catalog song by {requestId, name}.
+  /// Paths supplied by the desktop are never accepted.
+  static const filesDeleteRequest = 'files.delete.request';
+
+  /// Phone to desktop: {requestId, name, deleted} or {error}.
+  static const filesDeleted = 'files.deleted';
 
   /// Phone to desktop: the requested `name` is on its way as `file`, of
   /// `size` bytes; `streamable` is false when it plays only once whole.
