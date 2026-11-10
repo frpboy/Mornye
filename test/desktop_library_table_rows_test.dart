@@ -16,6 +16,7 @@ import 'package:mornye/providers/settings_provider.dart';
 import 'package:mornye/screens/queue_tab.dart';
 import 'package:mornye/services/history_database.dart';
 import 'package:mornye/services/library_database.dart';
+import 'package:mornye/services/sqlite_helpers.dart' as sqlite;
 import 'package:mornye/theme/app_theme.dart';
 import 'package:mornye/utils/desktop_platform.dart';
 import 'package:mornye/widgets/desktop/track_table.dart';
@@ -131,6 +132,9 @@ void main() {
     _renamed.clear();
     SharedPreferences.setMockInitialValues({});
     final previousFactory = databaseFactoryOrNull;
+    final previousOverride = sqlite.debugAppDatabaseFactory;
+    sqlite.debugAppDatabaseFactory = databaseFactorySqflitePlugin;
+    addTearDown(() => sqlite.debugAppDatabaseFactory = previousOverride);
     databaseFactory = databaseFactorySqflitePlugin;
     addTearDown(() => databaseFactory = previousFactory);
     final messenger =
@@ -141,9 +145,9 @@ void main() {
     messenger.setMockMethodCallHandler(paths, (_) async => root.path);
     addTearDown(() => messenger.setMockMethodCallHandler(paths, null));
     // The Library's track pages and counts; every other query is empty.
-    const sqlite = MethodChannel('com.tekartik.sqflite');
+    const sqliteChannel = MethodChannel('com.tekartik.sqflite');
     final versions = <int, int>{};
-    messenger.setMockMethodCallHandler(sqlite, (call) async {
+    messenger.setMockMethodCallHandler(sqliteChannel, (call) async {
       final args = (call.arguments as Map?) ?? {};
       if (call.method == 'openDatabase') {
         final id = versions.length + 1;
@@ -187,7 +191,7 @@ void main() {
       }
       return {'columns': <String>[], 'rows': <List<Object?>>[]};
     });
-    addTearDown(() => messenger.setMockMethodCallHandler(sqlite, null));
+    addTearDown(() => messenger.setMockMethodCallHandler(sqliteChannel, null));
   });
   tearDown(() => debugDesktopPlatformOverride = null);
 

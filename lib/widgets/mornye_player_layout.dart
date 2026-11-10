@@ -20,6 +20,7 @@ import 'package:mornye/widgets/player_gesture_regions.dart';
 import 'package:mornye/widgets/player_lyrics.dart';
 import 'package:mornye/widgets/player_lyrics_controls.dart';
 import 'package:mornye/widgets/player_metadata_title.dart';
+import 'package:mornye/widgets/playback_source_label.dart';
 import 'package:mornye/widgets/player_playback_controls.dart';
 import 'package:mornye/widgets/player_track_swipe.dart';
 
@@ -57,6 +58,7 @@ class MornyePlayerLayout extends ConsumerWidget {
     required this.onTrackNavigation,
     required this.onMoreActions,
     this.artworkAspectRatio,
+    this.controlsHeadroom = 0,
   });
 
   final MediaItem mediaItem;
@@ -66,6 +68,10 @@ class MornyePlayerLayout extends ConsumerWidget {
   final int page;
   final Widget motionArtwork;
   final double? artworkAspectRatio;
+
+  /// Spare height kept above the volume row while portrait has it to give,
+  /// which holds the track header and timeline higher than the toolbar.
+  final double controlsHeadroom;
   final bool insetArtwork;
   final double artworkTopInset;
   final MornyePlayerArtworkKeys artworkKeys;
@@ -135,7 +141,7 @@ class MornyePlayerLayout extends ConsumerWidget {
               0.0,
               (stage.maxHeight - (artworkOnly ? 24 : 8)).clamp(0.0, 360.0),
             );
-            final ratio = artworkAspectRatio ?? 1.0;
+            final ratio = artworkOnly ? 1.0 : artworkAspectRatio ?? 1.0;
             final artWidth = ratio < 1 ? artSize * ratio : artSize;
             final artHeight = ratio > 1 ? artSize / ratio : artSize;
             final fullBleed = !insetArtwork && !artworkOnly;
@@ -361,6 +367,13 @@ class MornyePlayerLayout extends ConsumerWidget {
         final transportShift = landscape
             ? 0.0
             : ((volumeGap - 16) / 2).clamp(0.0, 8.0);
+        // Controls keep their intrinsic height. Small portrait screens and
+        // large accessibility text can scroll instead of clipping the volume.
+        final minHeight = 480.0 + (scale - 1).clamp(0, 3) * 120;
+        final headroom = (constraints.maxHeight - minHeight).clamp(
+          0.0,
+          controlsHeadroom,
+        );
         Widget controls() => AnimatedBuilder(
           animation: artworkForeground,
           builder: (context, _) => PlayerPlaybackControls(
@@ -380,6 +393,11 @@ class MornyePlayerLayout extends ConsumerWidget {
             child: MornyeLandscapePlayer(
               page: page,
               isPlaying: ref.watch(playbackPlayingProvider),
+              autoHideLyricsControls: ref.watch(
+                settingsProvider.select(
+                  (settings) => settings.autoHideLyricsControls,
+                ),
+              ),
               controlsHeldOpen: lyricsOptionsOpen,
               onPageChanged: onPageChanged,
               artwork: stage(artworkOnly: true),
@@ -439,7 +457,7 @@ class MornyePlayerLayout extends ConsumerWidget {
               children: [
                 controls(),
                 if (showVolume) ...[
-                  SizedBox(height: volumeGap - transportShift),
+                  SizedBox(height: volumeGap - transportShift + headroom),
                   AnimatedBuilder(
                     animation: artworkForeground,
                     builder: (context, _) => PlayerVolumeControl(
@@ -448,15 +466,12 @@ class MornyePlayerLayout extends ConsumerWidget {
                     ),
                   ),
                 ],
-                const SizedBox(height: 8),
+                SizedBox(height: showVolume ? 8 : 8 + headroom),
               ],
             ),
           ),
         );
 
-        // Controls keep their intrinsic height. Small portrait screens and
-        // large accessibility text can scroll instead of clipping the volume.
-        final minHeight = 480.0 + (scale - 1).clamp(0, 3) * 120;
         if (constraints.maxHeight < minHeight) {
           return SingleChildScrollView(
             child: SizedBox(height: minHeight, child: content()),
@@ -532,6 +547,10 @@ class MornyePlayerLayout extends ConsumerWidget {
                             ),
                           ),
                         ),
+                      ),
+                      PlaybackSourceLabel(
+                        item: mediaItem,
+                        color: colorScheme.onSurface.withValues(alpha: 0.72),
                       ),
                     ],
                   ),

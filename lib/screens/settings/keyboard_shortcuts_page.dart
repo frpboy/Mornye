@@ -47,6 +47,13 @@ class KeyboardShortcutsPage extends ConsumerWidget {
 
     final sections = <(String, List<(String, List<SingleActivator>)>)>[
       (
+        l10n.desktopMenuFile,
+        [
+          (l10n.openAudioFiles, keys(DesktopCommand.openAudioFiles)),
+          (l10n.openAudioFolder, keys(DesktopCommand.openAudioFolder)),
+        ],
+      ),
+      (
         l10n.desktopMenuControls,
         [
           (l10n.desktopMenuPlayPause, keys(DesktopCommand.playPause)),
@@ -66,6 +73,7 @@ class KeyboardShortcutsPage extends ConsumerWidget {
             MaterialLocalizations.of(context).backButtonTooltip,
             keys(DesktopCommand.back),
           ),
+          (l10n.desktopShortcutForward, keys(DesktopCommand.forward)),
           (l10n.desktopMenuRefresh, keys(DesktopCommand.refresh)),
           (l10n.desktopShortcutDismiss, keys(DesktopCommand.dismiss)),
         ],

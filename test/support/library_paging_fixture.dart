@@ -17,11 +17,16 @@ Future<LibraryQueueStore> createLibraryPagingFixture(
     CREATE TABLE history_db.history AS
     SELECT *, track_name_norm AS sort_track, artist_name_norm AS sort_artist,
       album_name_norm AS sort_album, album_artist_norm AS sort_album_artist,
-      NULL AS cover_url, NULL AS downloaded_at, NULL AS service
+      NULL AS cover_url, NULL AS downloaded_at, NULL AS service,
+      NULL AS origin_file_path
     FROM library WHERE 0
   ''');
   await db.execute(
     'CREATE INDEX history_db.idx_history_album_key ON history(album_key)',
+  );
+  // HistorySchema v18 indexes the origin-path branch of the shadow check.
+  await db.execute(
+    'CREATE INDEX history_db.idx_history_origin ON history(origin_file_path)',
   );
   await db.execute('''
     CREATE TABLE history_db.history_path_keys (

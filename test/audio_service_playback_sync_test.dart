@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_service_platform_interface/audio_service_platform_interface.dart';
+import 'package:audio_service_platform_interface/method_channel_audio_service.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -12,6 +14,8 @@ class _Cache implements BaseCacheManager {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // This contract targets native channel acknowledgements, not desktop's no-op.
+  AudioServicePlatform.instance = MethodChannelAudioService();
 
   test(
     'playback synchronization awaits the native acknowledgement and errors',
