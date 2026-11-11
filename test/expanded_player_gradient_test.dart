@@ -85,9 +85,14 @@ void main() {
           final file = File('${directory.path}/${covers.length}.png');
           await file.writeAsBytes(bytes!.buffer.asUint8List());
           covers.add(file.uri);
-          await CoverPalette.resolveSourceColor(file.path);
+          // Use the same URI as the widget: Windows File.path may contain mixed
+          // separators while URI.toFilePath canonicalizes them to backslashes.
+          await CoverPalette.resolveSourceColor(file.uri.toString());
         }
       });
+      for (final uri in covers.take(4)) {
+        expect(CoverPalette.peekSourceColor(uri.toString()), isNotNull);
+      }
       const capture = ValueKey('surface');
       Future<void> show(Uri? uri, {bool reduced = false}) => tester.pumpWidget(
         MaterialApp(
