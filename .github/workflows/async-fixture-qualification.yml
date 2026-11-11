@@ -6,6 +6,7 @@ on:
     paths:
       - "test/desktop_library_table_rows_test.dart"
       - "test/link_phone_sources_test.dart"
+      - "test/cover_cache_info_repository_test.dart"
       - ".github/workflows/async-fixture-qualification.yml"
 
 permissions:
@@ -26,6 +27,7 @@ jobs:
         test-file:
           - desktop_library_table_rows_test.dart
           - link_phone_sources_test.dart
+          - cover_cache_info_repository_test.dart
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
