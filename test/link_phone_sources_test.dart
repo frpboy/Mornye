@@ -243,9 +243,19 @@ void main() {
     test('asks the phone and streams the song as it arrives', () async {
       final phone = sources();
       final name = '${_fileId(1)}.flac';
+      final requested = Completer<void>();
+      sendOverride = (message, _) async {
+        if (message['type'] == LinkMessageTypes.filesRequest &&
+            message['name'] == name &&
+            !requested.isCompleted) {
+          requested.complete();
+        }
+        return delivered;
+      };
+      addTearDown(phone.close);
       final first = phone.resolve(sourceId, name);
       final second = phone.resolve(sourceId, name);
-      await pumpEventQueue();
+      await requested.future.timeout(const Duration(seconds: 5));
       expect(sent, hasLength(1));
       expect(sent.single.deviceId, _phone);
       expect(sent.single.message, {
@@ -589,9 +599,19 @@ void main() {
         File(cached).writeAsStringSync('cached audio');
         tags[cached] = {'title': 'Cached', 'lyrics': ''};
         final phone = sources(lyricsTimeout: const Duration(seconds: 5));
+        final requested = Completer<void>();
+        sendOverride = (message, _) async {
+          if (message['type'] == LinkMessageTypes.filesLyricsRequest &&
+              message['name'] == name &&
+              !requested.isCompleted) {
+            requested.complete();
+          }
+          return delivered;
+        };
+        addTearDown(phone.close);
         final first = phone.metadata(sourceId, name);
         final second = phone.metadata(sourceId, name);
-        await pumpEventQueue();
+        await requested.future.timeout(const Duration(seconds: 5));
         expect(sent, hasLength(1));
         final reply = {
           'type': LinkMessageTypes.filesLyrics,
