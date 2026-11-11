@@ -22,6 +22,7 @@ import 'package:mornye/utils/desktop_platform.dart';
 import 'package:mornye/widgets/desktop/desktop_inspector.dart';
 import 'package:mornye/widgets/desktop/desktop_now_playing.dart';
 import 'package:mornye/widgets/mornye_player_background.dart';
+import 'package:mornye/widgets/cached_cover_image.dart';
 
 import 'support/fixed_settings.dart';
 
@@ -144,6 +145,22 @@ void main() {
         'missing',
       ];
       for (var index = 0; index < names.length; index++) {
+        if (index < covers.length) {
+          // At 1280x900 the real desktop column's max decode width is520
+          // (min(520, height-340)). Prewarm BEFORE mounting FileImage: a load
+          // started on the fake clock cannot complete inside runAsync.
+          final provider = coverImageProvider(
+            covers[index].toString(),
+            cacheWidth: 520,
+          )!;
+          final imageContext = tester.element(find.byKey(boundary));
+          await tester.runAsync(
+            () => precacheImage(
+              provider,
+              imageContext,
+            ).timeout(const Duration(seconds: 15)),
+          );
+        }
         tracks.add(
           MediaItem(
             id: names[index],
@@ -156,16 +173,19 @@ void main() {
           ),
         );
         await tester.pump();
-        // Decode the exact image providers used by the real artwork widget,
-        // outside the fake clock. A pump alone does not wait for file I/O.
-        final imageContext = tester.element(find.byKey(boundary));
-        final images = tester.widgetList<Image>(find.byType(Image)).toList();
-        await tester.runAsync(() async {
-          for (final image in images) {
-            await precacheImage(image.image, imageContext);
-          }
-        });
-        await tester.pumpAndSettle();
+        await tester.pumpAndSettle(
+          const Duration(milliseconds: 100),
+          EnginePhase.sendSemanticsUpdate,
+          const Duration(seconds: 5),
+        );
+        if (index < covers.length) {
+          final decoded = tester.widget<RawImage>(find.byType(RawImage));
+          expect(
+            decoded.image,
+            isNotNull,
+            reason: 'Synthetic cover ${names[index]} must be decoded',
+          );
+        }
         final background = tester.widget<MornyePlayerBackground>(
           find.byType(MornyePlayerBackground),
         );
