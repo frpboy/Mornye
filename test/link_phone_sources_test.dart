@@ -699,8 +699,20 @@ void main() {
       final name = '${_fileId(1)}.flac';
       final path = '${received.path}${Platform.pathSeparator}$name';
       tags[path] = {'title': 'Arrived'};
-      unawaited(phone.resolve(sourceId, name));
-      await pumpEventQueue();
+      final requested = Completer<void>();
+      sendOverride = (message, _) async {
+        if (message['type'] == LinkMessageTypes.filesRequest &&
+            message['name'] == name &&
+            !requested.isCompleted) {
+          requested.complete();
+        }
+        return delivered;
+      };
+      addTearDown(phone.close);
+      final resolving = phone.resolve(sourceId, name);
+      // Directory IO precedes the request. Event-queue turns alone do not
+      // prove the request exists, and metadata must see the pending ask.
+      await requested.future.timeout(const Duration(seconds: 5));
       final metadata = phone.metadata(sourceId, name);
       phone.onMessage(_phone, sendingMessage(name));
       var done = false;
@@ -708,6 +720,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(done, isFalse);
       File(path).writeAsBytesSync([1, 2, 3, 4, 5, 6]);
+      await resolving;
       expect((await metadata)['title'], 'Arrived');
     });
   });
