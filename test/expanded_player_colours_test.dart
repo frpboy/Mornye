@@ -44,7 +44,9 @@ Future<Uri> _cover(Directory directory, String name, Color color) async {
   picture.dispose();
   final file = File('${directory.path}/$name.png');
   await file.writeAsBytes(bytes!.buffer.asUint8List());
-  await CoverPalette.resolveSourceColor(file.path);
+  // Use the same URI as the widget: Windows File.path may contain mixed
+  // separators while URI.toFilePath canonicalizes them to backslashes.
+  await CoverPalette.resolveSourceColor(file.uri.toString());
   return file.uri;
 }
 
@@ -88,6 +90,9 @@ void main() {
           _cover(directory, 'transparent', Colors.transparent),
         ]),
       ))!;
+      for (final uri in covers.take(4)) {
+        expect(CoverPalette.peekSourceColor(uri.toString()), isNotNull);
+      }
       final tracks = StreamController<MediaItem?>();
       addTearDown(tracks.close);
       const boundary = ValueKey('expanded-player-capture');
