@@ -98,7 +98,7 @@ void main() {
       poll: const Duration(milliseconds: 10),
     );
     sent = [];
-    sentChanges = StreamController<void>.broadcast(sync: true);
+    sentChanges = StreamController<void>.broadcast();
     connected = {_phone};
     delivered = 1;
     index = DesktopLinkCatalogIndex(serverId: 'server-1', songs: const []);
