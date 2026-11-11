@@ -3,6 +3,33 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:mornye/theme/cover_palette.dart';
 
+/// Full-page colour for the expanded desktop player. Keep the cover hue while
+/// bounding luminance so white controls and the light subtitle stay readable.
+/// Uses the already cached source colour; no image work happens here.
+LinearGradient expandedPlayerGradient(Color? sourceColor) {
+  final source = sourceColor ?? const Color(0xff808080);
+  final hsl = HSLColor.fromColor(source);
+  final neutral = sourceColor == null || isNearGrayscaleCover(source);
+  final base = hsl.withSaturation(
+    neutral ? 0 : hsl.saturation.clamp(0.0, 0.72),
+  );
+  Color shade(double lightness, double maximumLuminance) {
+    var colour = base.withLightness(lightness).toColor();
+    while (colour.computeLuminance() > maximumLuminance && lightness > 0) {
+      lightness = (lightness - 0.01).clamp(0.0, 1.0);
+      colour = base.withLightness(lightness).toColor();
+    }
+    return colour;
+  }
+
+  return LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    stops: const [0, 0.48, 1],
+    colors: [shade(0.36, 0.12), shade(0.22, 0.065), shade(0.075, 0.015)],
+  );
+}
+
 /// Opaque cover-derived surface, with full-bleed artwork on the player page
 /// and a muted two-tone gradient behind lyrics and the queue.
 class MornyePlayerBackground extends StatelessWidget {
@@ -13,7 +40,12 @@ class MornyePlayerBackground extends StatelessWidget {
     this.squareArtwork = true,
     this.artworkAspectRatio,
     this.fadeStart = 0.58,
+    this.expandedSurface = false,
   });
+
+  /// Stronger full-window colour for the desktop expanded player only.
+  /// Mini-player, inspector and full-bleed mobile composition keep their style.
+  final bool expandedSurface;
 
   final Uri? artUri;
   final Widget? artwork;
@@ -52,27 +84,31 @@ class MornyePlayerBackground extends StatelessWidget {
           final motion = MediaQuery.disableAnimationsOf(context)
               ? Duration.zero
               : const Duration(milliseconds: 380);
-          final background = LinearGradient(
-            begin: artwork == null ? Alignment.topLeft : Alignment.topCenter,
-            end: artwork == null
-                ? Alignment.bottomRight
-                : Alignment.bottomCenter,
-            stops: artwork == null ? null : const [0, 0.5, 1],
-            colors: artwork == null
-                ? [
-                    muted
-                        .withLightness(0.28 + dominant.lightness * 0.24)
-                        .toColor(),
-                    muted
-                        .withLightness(0.14 + dominant.lightness * 0.20)
-                        .toColor(),
-                  ]
-                : [
-                    backdrop.withLightness(0.62).toColor(),
-                    backdrop.withLightness(0.54).toColor(),
-                    backdrop.withLightness(0.34).toColor(),
-                  ],
-          );
+          final background = expandedSurface
+              ? expandedPlayerGradient(sourceColor)
+              : LinearGradient(
+                  begin: artwork == null
+                      ? Alignment.topLeft
+                      : Alignment.topCenter,
+                  end: artwork == null
+                      ? Alignment.bottomRight
+                      : Alignment.bottomCenter,
+                  stops: artwork == null ? null : const [0, 0.5, 1],
+                  colors: artwork == null
+                      ? [
+                          muted
+                              .withLightness(0.28 + dominant.lightness * 0.24)
+                              .toColor(),
+                          muted
+                              .withLightness(0.14 + dominant.lightness * 0.20)
+                              .toColor(),
+                        ]
+                      : [
+                          backdrop.withLightness(0.62).toColor(),
+                          backdrop.withLightness(0.54).toColor(),
+                          backdrop.withLightness(0.34).toColor(),
+                        ],
+                );
           final size = MediaQuery.sizeOf(context);
           final artworkHeight =
               artworkAspectRatio != null && artworkAspectRatio! > 0
