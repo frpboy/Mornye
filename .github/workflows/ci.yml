@@ -29,6 +29,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Validate Discord SDK secret guards
+        run: python3 -m unittest discover -s scripts -p 'test_discord_sdk_workflow_conditions.py'
+
       - name: Filter paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
@@ -194,6 +197,7 @@ jobs:
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ios == 'true'
     env:
       MORNYE_DISCORD_SDK: "0"
+      DISCORD_SDK_KEY_PRESENT: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE != '' }}
 
     steps:
       - name: Checkout repository
@@ -228,7 +232,7 @@ jobs:
         run: dart scripts/prepare_flutter_sdk.dart
 
       - name: Prepare pinned Discord SDK
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && env.DISCORD_SDK_KEY_PRESENT == 'true'
         uses: ./.github/actions/discord-sdk
         with:
           passphrase: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE }}
@@ -259,6 +263,7 @@ jobs:
     if: needs.changes.outputs.android == 'true'
     env:
       MORNYE_DISCORD_SDK: "0"
+      DISCORD_SDK_KEY_PRESENT: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE != '' }}
 
     steps:
       - name: Checkout repository
@@ -308,7 +313,7 @@ jobs:
 
       # Fork PRs cannot access repository secrets and exercise the Lite build.
       - name: Prepare pinned Discord SDK
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && env.DISCORD_SDK_KEY_PRESENT == 'true'
         uses: ./.github/actions/discord-sdk
         with:
           passphrase: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE }}
