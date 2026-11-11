@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,6 +48,18 @@ Future<Uri> _cover(Directory directory, String name, Color color) async {
 }
 
 void main() {
+  setUpAll(() async {
+    for (final (family, asset) in [
+      ('Inter', 'assets/fonts/InterVariable.ttf'),
+      ('MaterialIcons', 'fonts/MaterialIcons-Regular.otf'),
+      (
+        'packages/cupertino_icons/CupertinoIcons',
+        'packages/cupertino_icons/assets/CupertinoIcons.ttf',
+      ),
+    ]) {
+      await (FontLoader(family)..addFont(rootBundle.load(asset))).load();
+    }
+  });
   testWidgets(
     'expanded desktop player follows artwork with readable secondary controls',
     (tester) async {
@@ -143,8 +156,16 @@ void main() {
           ),
         );
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 500));
-        await tester.pump();
+        // Decode the exact image providers used by the real artwork widget,
+        // outside the fake clock. A pump alone does not wait for file I/O.
+        final imageContext = tester.element(find.byKey(boundary));
+        final images = tester.widgetList<Image>(find.byType(Image)).toList();
+        await tester.runAsync(() async {
+          for (final image in images) {
+            await precacheImage(image.image, imageContext);
+          }
+        });
+        await tester.pumpAndSettle();
         final background = tester.widget<MornyePlayerBackground>(
           find.byType(MornyePlayerBackground),
         );
@@ -155,19 +176,24 @@ void main() {
           ).colorScheme.onSurfaceVariant,
           const Color(0xffe6e6eb),
         );
-        final gradientWidget = tester
-            .widget<TweenAnimationBuilder<LinearGradient>>(
-              find.descendant(
-                of: find.byType(MornyePlayerBackground),
-                matching: find.byType(TweenAnimationBuilder<LinearGradient>),
-              ),
-            );
         final expected = expandedPlayerGradient(
           index < covers.length
               ? CoverPalette.peekSourceColor(covers[index].toString())
               : null,
         );
-        expect(gradientWidget.tween.end, expected, reason: names[index]);
+        final paintedBackground = tester.widget<DecoratedBox>(
+          find
+              .descendant(
+                of: find.byType(MornyePlayerBackground),
+                matching: find.byType(DecoratedBox),
+              )
+              .first,
+        );
+        expect(
+          (paintedBackground.decoration as BoxDecoration).gradient,
+          expected,
+          reason: 'The settled painted gradient must match ${names[index]}',
+        );
         expect(tester.takeException(), isNull, reason: names[index]);
         final capturePath = Platform.environment['MORNYE_CAPTURE_DIR'];
         if (capturePath != null) {
