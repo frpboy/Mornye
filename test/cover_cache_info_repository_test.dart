@@ -170,6 +170,9 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(writes.count, 1);
       expect(encoded, 20);
+      await repository.flush();
+      expect(writes.count, 1);
+      expect(encoded, 20);
       expect(_rows(file), hasLength(40));
 
       for (final object in objects.take(10)) {
@@ -182,6 +185,11 @@ void main() {
 
       await repository.update(objects[12].copyWith(eTag: '"new"'));
       await _until(() => writes.count == 2, 'the update save');
+      // The counter sees temporary-file creation, not the final rename.
+      // Keep the timer-driven write assertion, then wait for that write to
+      // reach disk before inspecting the persisted touched timestamps.
+      await repository.flush();
+      expect(writes.count, 2);
       expect(encoded, 31);
       final touchedRows = {
         for (final row in _rows(file)) row['_id'] as int: row['touched'],

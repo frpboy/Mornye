@@ -16,6 +16,8 @@ import 'package:mornye/providers/settings_provider.dart';
 import 'package:mornye/screens/queue_tab.dart';
 import 'package:mornye/services/history_database.dart';
 import 'package:mornye/services/library_database.dart';
+import 'package:mornye/services/sqlite_helpers.dart'
+    show ensureAppDatabaseFactory;
 import 'package:mornye/theme/app_theme.dart';
 import 'package:mornye/utils/desktop_platform.dart';
 import 'package:mornye/widgets/desktop/track_table.dart';
@@ -131,6 +133,11 @@ void main() {
     _renamed.clear();
     SharedPreferences.setMockInitialValues({});
     final previousFactory = databaseFactoryOrNull;
+    // Install the desktop factory before replacing it with this test's
+    // method-channel database. Otherwise the first app open overwrites the
+    // mock with FFI, and the synthetic song pages never reach the UI.
+    debugDesktopPlatformOverride = true;
+    ensureAppDatabaseFactory();
     databaseFactory = databaseFactorySqflitePlugin;
     addTearDown(() => databaseFactory = previousFactory);
     final messenger =
@@ -204,7 +211,13 @@ void main() {
       themeMode = ValueNotifier(ThemeMode.light);
       addTearDown(themeMode.dispose);
       nowPlaying = StreamController<MediaItem?>();
-      addTearDown(nowPlaying.close);
+      addTearDown(() async {
+        // Dispose StreamProvider's listener before closing its source,
+        // including when a row assertion fails early.
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        await nowPlaying.close();
+      });
       await tester.pumpWidget(
         ProviderScope(
           overrides: [

@@ -29,6 +29,42 @@ class _LyricsClient extends FakeLinkClient {
   }
 }
 
+// Observe real directory scans so coalescing tests can hold the phone reply
+// until both callers have reached the pending-request phase.
+final class _ReceivedLookups extends IOOverrides {
+  _ReceivedLookups(this.path);
+  final String path;
+  final done = Completer<void>();
+  int completed = 0;
+
+  @override
+  Directory createDirectory(String path) {
+    final directory = super.createDirectory(path);
+    if (path != this.path) return directory;
+    return _ObservedDirectory(directory, () {
+      if (++completed == 2 && !done.isCompleted) done.complete();
+    });
+  }
+}
+
+class _ObservedDirectory implements Directory {
+  _ObservedDirectory(this.directory, this.onListed);
+  final Directory directory;
+  final void Function() onListed;
+
+  @override
+  Stream<FileSystemEntity> list({
+    bool recursive = false,
+    bool followLinks = true,
+  }) async* {
+    yield* directory.list(recursive: recursive, followLinks: followLinks);
+    onListed();
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 const _phone = 'phone-1';
 
 String _fileId(int i) => i.toRadixString(16).padLeft(32, '0');
@@ -39,6 +75,7 @@ void main() {
   late LinkPhoneCatalogs catalogs;
   late LinkArrivingFiles arriving;
   late List<({Map<String, dynamic> message, String deviceId})> sent;
+  late StreamController<void> sentChanges;
   late Set<String> connected;
   late int delivered;
   late DesktopLinkCatalogIndex? index;
@@ -61,6 +98,7 @@ void main() {
       poll: const Duration(milliseconds: 10),
     );
     sent = [];
+    sentChanges = StreamController<void>.broadcast();
     connected = {_phone};
     delivered = 1;
     index = DesktopLinkCatalogIndex(serverId: 'server-1', songs: const []);
@@ -69,6 +107,7 @@ void main() {
   });
 
   tearDown(() async {
+    await sentChanges.close();
     await arriving.close();
     await root.delete(recursive: true);
     await received.delete(recursive: true);
@@ -77,25 +116,66 @@ void main() {
   LinkPhoneSources sources({
     Duration? answerTimeout,
     Duration lyricsTimeout = const Duration(milliseconds: 250),
-  }) => LinkPhoneSources(
-    catalogs: catalogs,
-    index: () => index,
-    receivedDir: () => received.path,
-    connectedDevice: (id) =>
-        id == sourceId && connected.contains(_phone) ? _phone : null,
-    connectedDevices: () => [...connected],
-    send: (message, deviceId) async {
-      sent.add((message: message, deviceId: deviceId));
-      return sendOverride == null
-          ? delivered
-          : sendOverride!(message, deviceId);
-    },
-    arriving: () => arriving,
-    readTags: (path) async =>
-        tags[path] ?? (throw const FileSystemException('unreadable')),
-    answerTimeout: answerTimeout ?? const Duration(seconds: 15),
-    lyricsTimeout: lyricsTimeout,
-  );
+  }) {
+    final phone = LinkPhoneSources(
+      catalogs: catalogs,
+      index: () => index,
+      receivedDir: () => received.path,
+      connectedDevice: (id) =>
+          id == sourceId && connected.contains(_phone) ? _phone : null,
+      connectedDevices: () => [...connected],
+      send: (message, deviceId) async {
+        sent.add((message: message, deviceId: deviceId));
+        sentChanges.add(null);
+        return sendOverride == null
+            ? delivered
+            : sendOverride!(message, deviceId);
+      },
+      arriving: () => arriving,
+      readTags: (path) async =>
+          tags[path] ?? (throw const FileSystemException('unreadable')),
+      answerTimeout: answerTimeout ?? const Duration(seconds: 15),
+      lyricsTimeout: lyricsTimeout,
+    );
+    addTearDown(phone.close);
+    return phone;
+  }
+
+  Future<void> requested(
+    String type,
+    String name, {
+    String deviceId = _phone,
+    int occurrence = 1,
+  }) async {
+    // A send is observable only after the preceding filesystem/catalog IO.
+    // Queue turns alone cannot establish that a request exists.
+    bool present() =>
+        sent
+            .where(
+              (entry) =>
+                  entry.deviceId == deviceId &&
+                  entry.message['type'] == type &&
+                  entry.message['name'] == name,
+            )
+            .length >=
+        occurrence;
+    while (!present()) {
+      await sentChanges.stream.first.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw TimeoutException(
+          'Waiting for $type name=$name device=$deviceId occurrence=$occurrence; '
+          'observed=${sent.map((entry) => entry.message).toList()}',
+        ),
+      );
+    }
+  }
+
+  Future<void> scannedBoth(_ReceivedLookups lookups) async {
+    await lookups.done.future.timeout(const Duration(seconds: 5));
+    // Both real IO streams ended. Drain their IO-free continuations while
+    // the phone answer is still held, so both join the pending request.
+    await pumpEventQueue();
+  }
 
   Future<void> commit(List<LinkPhoneSong> songs) async {
     final router = LinkHostRouter();
@@ -243,9 +323,13 @@ void main() {
     test('asks the phone and streams the song as it arrives', () async {
       final phone = sources();
       final name = '${_fileId(1)}.flac';
-      final first = phone.resolve(sourceId, name);
-      final second = phone.resolve(sourceId, name);
-      await pumpEventQueue();
+      final lookups = _ReceivedLookups(received.path);
+      final (first, second) = IOOverrides.runWithIOOverrides(
+        () => (phone.resolve(sourceId, name), phone.resolve(sourceId, name)),
+        lookups,
+      );
+      await scannedBoth(lookups);
+      await requested(LinkMessageTypes.filesRequest, name);
       expect(sent, hasLength(1));
       expect(sent.single.deviceId, _phone);
       expect(sent.single.message, {
@@ -271,7 +355,7 @@ void main() {
       final phone = sources();
       final name = '${_fileId(1)}.m4a';
       final resolved = phone.resolve(sourceId, name);
-      await pumpEventQueue();
+      await requested(LinkMessageTypes.filesRequest, name);
       phone.onMessage(_phone, {...sendingMessage(name), 'streamable': false});
       var done = false;
       unawaited(resolved.then((_) => done = true));
@@ -285,7 +369,7 @@ void main() {
       final phone = sources();
       final name = '${_fileId(1)}.flac';
       final resolved = phone.resolve(sourceId, name);
-      await pumpEventQueue();
+      await requested(LinkMessageTypes.filesRequest, name);
       phone.onMessage(_phone, {
         'type': LinkMessageTypes.filesFailed,
         'name': name,
@@ -303,7 +387,7 @@ void main() {
       );
       // A later play asks again.
       unawaited(phone.resolve(sourceId, name).catchError((Object _) => ''));
-      await pumpEventQueue();
+      await requested(LinkMessageTypes.filesRequest, name, occurrence: 2);
       expect(sent, hasLength(2));
       phone.close();
     });
@@ -334,8 +418,9 @@ void main() {
 
     test('fails a request when its phone disconnects', () async {
       final phone = sources();
-      final resolved = phone.resolve(sourceId, '${_fileId(1)}.flac');
-      await pumpEventQueue();
+      final name = '${_fileId(1)}.flac';
+      final resolved = phone.resolve(sourceId, name);
+      await requested(LinkMessageTypes.filesRequest, name);
       phone.keepConnected({'phone-2'});
       await expectLater(resolved, throwsA(linkError('unavailable')));
     });
@@ -360,7 +445,7 @@ void main() {
       final phone = sources();
       final name = '${_fileId(1)}.flac';
       final recovered = phone.recover(receivedPath(name));
-      await pumpEventQueue();
+      await requested(LinkMessageTypes.filesRequest, name);
       expect(sent.single.deviceId, _phone);
       expect(sent.single.message, {
         'type': LinkMessageTypes.filesRequest,
@@ -380,13 +465,13 @@ void main() {
       final phone = sources();
       final name = '${_fileId(1)}.flac';
       final recovered = phone.recover(receivedPath(name));
-      await pumpEventQueue();
+      await requested(LinkMessageTypes.filesRequest, name);
       phone.onMessage(_phone, {
         'type': LinkMessageTypes.filesFailed,
         'name': name,
         'reason': 'not_found',
       });
-      await pumpEventQueue();
+      await requested(LinkMessageTypes.filesRequest, name, deviceId: 'phone-2');
       expect([for (final entry in sent) entry.deviceId], [_phone, 'phone-2']);
 
       phone.onMessage('phone-2', sendingMessage(name));
@@ -423,7 +508,7 @@ void main() {
         name,
         onProgress: (received, size) => progress.add((received, size)),
       );
-      await pumpEventQueue();
+      await requested(LinkMessageTypes.filesRequest, name);
       expect(sent.single.message, {
         'type': LinkMessageTypes.filesRequest,
         'name': name,
@@ -452,9 +537,13 @@ void main() {
     test('shares one request with a play of the same song', () async {
       final phone = sources();
       final name = '${_fileId(1)}.flac';
-      final playing = phone.resolve(sourceId, name);
-      final whole = phone.receive(_phone, name);
-      await pumpEventQueue();
+      final lookups = _ReceivedLookups(received.path);
+      final (playing, whole) = IOOverrides.runWithIOOverrides(
+        () => (phone.resolve(sourceId, name), phone.receive(_phone, name)),
+        lookups,
+      );
+      await scannedBoth(lookups);
+      await requested(LinkMessageTypes.filesRequest, name);
       expect(sent, hasLength(1));
       phone.onMessage(_phone, sendingMessage(name));
       expect(await playing, startsWith('http://127.0.0.1:'));
@@ -467,7 +556,7 @@ void main() {
       final phone = sources();
       final name = '${_fileId(1)}.flac';
       final whole = phone.receive(_phone, name);
-      await pumpEventQueue();
+      await requested(LinkMessageTypes.filesRequest, name);
       phone.onMessage(_phone, {
         'type': LinkMessageTypes.filesFailed,
         'name': name,
@@ -547,7 +636,7 @@ void main() {
         final phone = sources();
         final name = '${_fileId(1)}.flac';
         final pending = phone.metadata(sourceId, name);
-        await pumpEventQueue();
+        await requested(LinkMessageTypes.filesLyricsRequest, name);
         expect(sent, hasLength(1));
         final request = sent.single;
         expect(request.deviceId, _phone);
@@ -589,9 +678,14 @@ void main() {
         File(cached).writeAsStringSync('cached audio');
         tags[cached] = {'title': 'Cached', 'lyrics': ''};
         final phone = sources(lyricsTimeout: const Duration(seconds: 5));
-        final first = phone.metadata(sourceId, name);
-        final second = phone.metadata(sourceId, name);
-        await pumpEventQueue();
+        final lookups = _ReceivedLookups(received.path);
+        final (first, second) = IOOverrides.runWithIOOverrides(
+          () =>
+              (phone.metadata(sourceId, name), phone.metadata(sourceId, name)),
+          lookups,
+        );
+        await scannedBoth(lookups);
+        await requested(LinkMessageTypes.filesLyricsRequest, name);
         expect(sent, hasLength(1));
         final reply = {
           'type': LinkMessageTypes.filesLyrics,
@@ -634,7 +728,7 @@ void main() {
       final phone = sources(lyricsTimeout: const Duration(seconds: 5));
       final name = '${_fileId(1)}.flac';
       final pending = phone.metadata(sourceId, name);
-      await pumpEventQueue();
+      await requested(LinkMessageTypes.filesLyricsRequest, name);
       phone.onMessage(_phone, {
         'type': LinkMessageTypes.filesLyrics,
         'requestId': sent.single.message['requestId'],
@@ -648,10 +742,26 @@ void main() {
 
     test('disconnect and close finish outstanding lyrics reads', () async {
       await commit([song(1)]);
+      final name = '${_fileId(1)}.flac';
       for (final close in [false, true]) {
         final phone = sources(lyricsTimeout: const Duration(seconds: 5));
-        final pending = phone.metadata(sourceId, '${_fileId(1)}.flac');
-        await pumpEventQueue();
+        final occurrence =
+            sent
+                .where(
+                  (entry) =>
+                      entry.deviceId == _phone &&
+                      entry.message['type'] ==
+                          LinkMessageTypes.filesLyricsRequest &&
+                      entry.message['name'] == name,
+                )
+                .length +
+            1;
+        final pending = phone.metadata(sourceId, name);
+        await requested(
+          LinkMessageTypes.filesLyricsRequest,
+          name,
+          occurrence: occurrence,
+        );
         if (close) {
           phone.close();
         } else {
@@ -699,8 +809,10 @@ void main() {
       final name = '${_fileId(1)}.flac';
       final path = '${received.path}${Platform.pathSeparator}$name';
       tags[path] = {'title': 'Arrived'};
-      unawaited(phone.resolve(sourceId, name));
-      await pumpEventQueue();
+      final resolving = phone.resolve(sourceId, name);
+      // Directory IO precedes the request. Event-queue turns alone do not
+      // prove the request exists, and metadata must see the pending ask.
+      await requested(LinkMessageTypes.filesRequest, name);
       final metadata = phone.metadata(sourceId, name);
       phone.onMessage(_phone, sendingMessage(name));
       var done = false;
@@ -708,6 +820,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(done, isFalse);
       File(path).writeAsBytesSync([1, 2, 3, 4, 5, 6]);
+      await resolving;
       expect((await metadata)['title'], 'Arrived');
     });
   });
