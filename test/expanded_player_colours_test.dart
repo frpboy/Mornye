@@ -10,6 +10,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mornye/controllers/player_metadata_controller.dart';
 import 'package:mornye/l10n/app_localizations.dart';
+import 'package:mornye/models/track.dart';
+import 'package:mornye/providers/library_collections_provider.dart';
+import 'package:mornye/providers/settings_provider.dart';
 import 'package:mornye/providers/music_player_provider.dart';
 import 'package:mornye/providers/system_volume_provider.dart';
 import 'package:mornye/theme/cover_palette.dart';
@@ -18,6 +21,15 @@ import 'package:mornye/utils/desktop_platform.dart';
 import 'package:mornye/widgets/desktop/desktop_inspector.dart';
 import 'package:mornye/widgets/desktop/desktop_now_playing.dart';
 import 'package:mornye/widgets/mornye_player_background.dart';
+
+import 'support/fixed_settings.dart';
+
+// Keep favourite state and collection lookups synthetic. The real player
+// widget still renders, but never opens the user's library/history database.
+class _Collections extends LibraryCollectionsNotifier {
+  @override
+  LibraryCollectionsState build() => LibraryCollectionsState(isLoaded: true);
+}
 
 Future<Uri> _cover(Directory directory, String name, Color color) async {
   final recorder = ui.PictureRecorder();
@@ -68,6 +80,18 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            settingsProvider.overrideWith(FixedSettingsNotifier.new),
+            libraryCollectionsProvider.overrideWith(_Collections.new),
+            playerCollectionTrackProvider.overrideWith(
+              (ref, item) async => Track(
+                id: item.id,
+                name: item.title,
+                artistName: item.artist ?? '',
+                albumName: item.album ?? '',
+                duration: item.duration?.inSeconds ?? 0,
+                source: 'local',
+              ),
+            ),
             currentMediaItemProvider.overrideWithBuild(
               (ref, notifier) => tracks.stream,
             ),
