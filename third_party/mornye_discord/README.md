@@ -19,7 +19,8 @@ building. Its AES-256 encrypted payload contains only the Android AAR, iOS
 XCFramework, C++ header and license notices from the official download. Set the
 Actions repository secret `DISCORD_MOBILE_SDK_PASSPHRASE` to the payload's key.
 The helper verifies SHA-256 checksums for all 16 required files before staging
-them. A missing key, failed decryption or changed SDK stops the build.
+them. When SDK preparation runs, a missing key, failed decryption or changed
+SDK stops that build.
 
 Decrypted vendor binaries and notices stay under the ignored `.dart_tool/`,
 `sdk/` and `ios/Frameworks/` directories. Do not commit the encryption key,
@@ -39,10 +40,12 @@ as unavailable; the staged SDK files are retained for subsequent full builds.
 
 Production Android builds use `bash scripts/build_android.sh --production`,
 which forces Discord on, checks the staged SDK and audits it in every APK ABI.
-`--production --lite` is rejected. Release CI requires the SDK on both platforms
-and stops before publication if the SDK is absent. CI on trusted branches also
-builds with Discord; fork PRs run native/debug checks and explicit Lite builds
-without receiving the decryption key.
+`--production --lite` is rejected. Release workflows require the SDK on both
+platforms and stop before publication if it is absent. In regular CI, Android
+and iOS use Discord when the key is available and the event is a same-repository
+build. When the key is missing or the PR comes from a fork, SDK preparation is
+skipped: Android uses its Lite build and iOS builds without Discord. If a key is
+present but cannot decrypt the pinned SDK, preparation still fails closed.
 
 Android uses the installed Discord app's signed-in session (Social SDK 1.10+).
 The AAR and CMake use the same staged native library; the host packages one copy
