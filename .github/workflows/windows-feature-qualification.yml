@@ -112,8 +112,26 @@ jobs:
         run: |
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc -PathType Leaf)) { throw 'Pinned Inno Setup 6.7.1 is not preinstalled.' }
-          $version = (Get-Item $iscc).VersionInfo.ProductVersion
-          if ($version -notmatch '^6\.7\.1(?:\.0)?$') { throw "Unexpected Inno Setup version: $version" }
+          # ISCC.exe's PE ProductVersion is 0.0.0.0 on these runner images.
+          # Inno 6.7.1 has no --version option. A no-output compilation prints
+          # the actual compiler DLL's engine version (ISDllGetVersion).
+          $probe = Join-Path $env:RUNNER_TEMP 'inno-version-probe.iss'
+          @(
+            '[Setup]'
+            'AppName=Mornye compiler qualification probe'
+            'AppVersion=0.0.0'
+            'CreateAppDir=no'
+            'Uninstallable=no'
+            'Output=no'
+          ) | Set-Content -Encoding utf8 $probe
+          $probeOutput = & $iscc '/O-' $probe 2>&1
+          $probeExit = $LASTEXITCODE
+          $probeOutput | ForEach-Object { Write-Host $_ }
+          if ($probeExit -ne 0) { throw "Inno compiler probe failed: $probeExit" }
+          $engine = @($probeOutput | Where-Object { "$_" -match '^Compiler engine version: ' })
+          if ($engine.Count -ne 1 -or "$($engine[0])" -cne 'Compiler engine version: Inno Setup 6.7.1') {
+            throw "Unexpected Inno Setup compiler engine: $($engine -join '; ')"
+          }
           (Split-Path $iscc) >> $env:GITHUB_PATH
 
       - name: Build Windows app
