@@ -1,0 +1,52 @@
+name: Windows artwork tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "lib/utils/playback_artwork.dart"
+      - "test/playback_artwork_test.dart"
+      - "pubspec.yaml"
+      - "pubspec.lock"
+      - ".fvmrc"
+      - "scripts/prepare_flutter_sdk.dart"
+      - "patches/flutter/**"
+      - ".github/workflows/windows-artwork-tests.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-artwork-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  artwork:
+    name: Windows playback artwork regression tests
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pinned Flutter without persistent cache
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version-file: .fvmrc
+          cache: false
+          pub-cache: false
+
+      - name: Initialize Flutter SDK version metadata
+        run: flutter --version
+
+      - name: Prepare repository Flutter framework patch
+        run: dart scripts/prepare_flutter_sdk.dart
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Run artwork tests on Windows
+        run: flutter test --no-pub --reporter expanded test/playback_artwork_test.dart
