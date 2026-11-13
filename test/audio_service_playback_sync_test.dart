@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_service_platform_interface/audio_service_platform_interface.dart';
+import 'package:audio_service_platform_interface/method_channel_audio_service.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -41,6 +43,11 @@ void main() {
       final errors = <Object>[];
       final subscription = AudioService.asyncError.listen(errors.add);
       addTearDown(subscription.cancel);
+      // Linux and Windows default to NoOpAudioService. This test exercises
+      // the native method-channel acknowledgement, regardless of its host.
+      final previousPlatform = AudioServicePlatform.instance;
+      AudioServicePlatform.instance = MethodChannelAudioService();
+      addTearDown(() => AudioServicePlatform.instance = previousPlatform);
       final handler = await AudioService.init(
         builder: BaseAudioHandler.new,
         cacheManager: _Cache(),
