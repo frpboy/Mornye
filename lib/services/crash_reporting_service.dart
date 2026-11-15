@@ -2,36 +2,43 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+// The concrete HTTP transport classes are not exported by the SDK, but the
+// boundary transport must wrap the real transport DURING init (before any
+// integration can emit), not after. Pinned via pubspec.lock to 9.30.1.
+// ignore: implementation_imports
+import 'package:sentry/src/transport/http_transport.dart';
+// ignore: implementation_imports
+import 'package:sentry/src/transport/rate_limiter.dart';
 
 import 'package:mornye/constants/app_info.dart';
 import 'package:mornye/utils/logger.dart';
 
 /// Minimal automatic crash reporting for fork builds.
 ///
-/// Boundary contract (do not widen without envelope-level qualification):
+/// Boundary contract (do not widen without independent review):
 /// - Dart-layer events only. The native SDKs are NOT initialized
 ///   ([SentryFlutterOptions.autoInitializeNativeSdk] stays false), because
 ///   native envelopes bypass the Dart [SentryOptions.beforeSend] hook and
 ///   have not been proven to respect this boundary. Rust-backend native
-///   crashes are therefore NOT reported yet.
-/// - Fixed generic errors plus trusted minimal metadata only. Exception
-///   VALUES, event messages and breadcrumbs are free text that can contain
-///   URLs, local music paths or titles, so they never leave the device;
-///   regex redaction of free text is not treated as qualification. What
-///   leaves: exception TYPE (code), stack frames (package:/dart: locations,
-///   code provenance), app version, OS and generic device metadata.
-/// - Final envelope validation: [BoundaryTransport] wraps the configured
-///   transport and drops every envelope item that is not an error event or
-///   a client report, so attachments, transactions, replays, profiles and
-///   logs cannot leave even if an option is ever misconfigured or the SDK
-///   adds data after beforeSend.
-/// - No session replay, no screenshots, no view hierarchy, no performance
-///   traces, no session tracking, no native breadcrumbs.
+///   crashes are therefore NOT reported yet. The Android manifest carries
+///   no Sentry metadata, so the sentry-android ContentProvider auto-init
+///   path has no DSN and stays dark as well.
+/// - Every outgoing event is rebuilt as a fixed generic error marker with
+///   fresh identity/time, fixed SDK/platform/level and our build constants.
+///   No input event field survives. This intentionally sacrifices exception
+///   types, stack frames and device/OS details until provenance is qualified.
+/// - Final envelope boundary: [BoundaryTransport] is installed inside init,
+///   before integrations can emit. It reconstructs BOTH headers and event
+///   bytes, dropping attachments, traces, sessions and client reports even
+///   when they are added after beforeSend. It pins the pure-Dart HTTP path.
+/// - No session replay, screenshots, view hierarchy, performance traces,
+///   session tracking or native breadcrumbs.
 /// - Release builds only, so development runs cannot spend the shared free
 ///   error quota (5000 events/month org-wide at the time of writing).
 ///
 /// The DSN is a public client identifier, not a secret; an empty
-/// SENTRY_DSN dart-define disables reporting entirely.
+/// SENTRY_DSN dart-define disables reporting entirely. The pre-existing
+/// local AppCrashService is unchanged and remains on-device only.
 const String _dsn = String.fromEnvironment(
   'SENTRY_DSN',
   defaultValue:
@@ -42,86 +49,45 @@ bool get crashReportingEnabled => kReleaseMode && _dsn.isNotEmpty;
 
 final _log = AppLogger('CrashReporting');
 
-/// Rebuilds one frame with code provenance only: the package:/dart:
-/// fileName, function and location. Absolute paths, runtime variable
-/// values and build-machine source excerpts are dropped.
-SentryStackFrame _cleanFrame(SentryStackFrame frame) => SentryStackFrame(
-  fileName: frame.fileName,
-  function: frame.function,
-  module: frame.module,
-  lineNo: frame.lineNo,
-  colNo: frame.colNo,
-  inApp: frame.inApp,
-  package: frame.package,
-  platform: frame.platform,
-  rawFunction: frame.rawFunction,
+// No source event field is trusted. Code provenance needs a separate,
+// reviewed allowlist before it can be added. Even token-shaped strings can
+// carry a title, username or path segment.
+SdkVersion _boundarySdk() => SdkVersion(name: 'mornye.crash', version: '1.0.0');
+
+/// Creates a generic error marker with fresh identity and timestamp.
+/// The source is intentionally ignored, including its SDK/build contexts.
+SentryEvent boundaryCrashEvent(SentryEvent source) => _genericCrashEvent();
+
+SentryEvent _genericCrashEvent() => SentryEvent(
+  eventId: SentryId.newId(),
+  timestamp: DateTime.now().toUtc(),
+  sdk: _boundarySdk(),
+  platform: 'dart',
+  logger: 'mornye.crash',
+  release: 'mornye@${AppInfo.version}+${AppInfo.buildNumber}',
+  dist: AppInfo.buildNumber,
+  environment: 'release',
+  level: SentryLevel.error,
+  exceptions: [SentryException(type: 'Error', value: 'Application error')],
 );
 
-SentryStackTrace? _cleanStackTrace(SentryStackTrace? stackTrace) =>
-    stackTrace == null
-    ? null
-    : SentryStackTrace(
-        frames: stackTrace.frames
-            .cast<SentryStackFrame>()
-            .map(_cleanFrame)
-            .toList(),
-      );
-
-/// Event-level boundary applied to every outgoing event. Returns the
-/// scrubbed event; exposed for tests.
-SentryEvent scrubSentryEvent(SentryEvent event) {
-  event
-    ..user = null
-    ..request = null
-    ..message = null
-    ..breadcrumbs = null
-    // Arbitrary key-value context can hold paths or content metadata; the
-    // SDK adds nothing here we need.
-    // ignore: deprecated_member_use
-    ..extra = {};
-
-  for (final exception
-      in event.exceptions?.cast<SentryException>() ??
-          const <SentryException>[]) {
-    exception
-      ..value = null
-      ..stackTrace = _cleanStackTrace(exception.stackTrace);
-  }
-
-  for (final thread
-      in event.threads?.cast<SentryThread>() ?? const <SentryThread>[]) {
-    thread.stacktrace = _cleanStackTrace(thread.stacktrace);
-  }
-
-  // A device name is often a personal name ("Rahul's Pixel").
-  event.contexts.device?.name = null;
-
-  return event;
-}
-
-/// Final envelope boundary: only error events and client reports may leave
-/// the device. Wraps whatever transport the SDK configured (the concrete
-/// HTTP transport classes are not part of the SDK's public API, so this is
-/// installed on the options object right after init).
+/// Final boundary, installed during init. Original event bytes, envelope
+/// headers and item headers are never forwarded. At most one fresh generic
+/// marker leaves per envelope containing an event. All other item types
+/// (including attachments and client reports) are dropped without reading.
 class BoundaryTransport implements Transport {
   BoundaryTransport(this._inner);
 
   final Transport _inner;
 
-  // SentryItemType is not part of the SDK's public exports; these are its
-  // 'event' and 'client_report' constants.
-  static const Set<String> _allowedItemTypes = {'event', 'client_report'};
-
   @override
   Future<SentryId?> send(SentryEnvelope envelope) {
-    final items = envelope.items
-        .cast<SentryEnvelopeItem>()
-        .where((item) => _allowedItemTypes.contains(item.header.type))
-        .toList();
-    if (items.isEmpty) {
+    if (!envelope.items.any((item) => item.header.type == 'event')) {
       return Future.value(SentryId.empty());
     }
-    return _inner.send(SentryEnvelope(envelope.header, items));
+    return _inner.send(
+      SentryEnvelope.fromEvent(_genericCrashEvent(), _boundarySdk()),
+    );
   }
 }
 
@@ -139,10 +105,8 @@ Future<void> initCrashReporting({
   final enabled = forceEnable || (kReleaseMode && dsn.isNotEmpty);
   if (!enabled || _initialized) return;
 
-  SentryFlutterOptions? configuredOptions;
   try {
     await SentryFlutter.init((options) {
-      configuredOptions = options;
       options
         ..dsn = dsn
         ..release = 'mornye@${AppInfo.version}+${AppInfo.buildNumber}'
@@ -162,14 +126,15 @@ Future<void> initCrashReporting({
         ..enableNdkScopeSync = false
         ..replay.sessionSampleRate = 0.0
         ..replay.onErrorSampleRate = 0.0
+        // Installed now, during init, so no integration can emit through an
+        // unfiltered transport. Pins the pure-Dart HTTP path.
+        ..transport = BoundaryTransport(
+          HttpTransport(options, RateLimiter(options)),
+        )
         ..beforeSend = _beforeSend
-        ..beforeBreadcrumb = _beforeBreadcrumb;
+        // Breadcrumbs are optional free text; never record them.
+        ..beforeBreadcrumb = (crumb, hint) => null;
     });
-    // Install the final envelope boundary on the live transport.
-    final installed = configuredOptions;
-    if (installed != null) {
-      installed.transport = BoundaryTransport(installed.transport);
-    }
     _initialized = true;
   } catch (e) {
     // Reporting must never break startup.
@@ -178,10 +143,7 @@ Future<void> initCrashReporting({
 }
 
 FutureOr<SentryEvent?> _beforeSend(SentryEvent event, Hint hint) =>
-    scrubSentryEvent(event);
-
-// Breadcrumbs are optional free text; never record them.
-Breadcrumb? _beforeBreadcrumb(Breadcrumb? breadcrumb, Hint hint) => null;
+    boundaryCrashEvent(event);
 
 /// Reports an uncaught zone error. No-op unless reporting initialized; the
 /// SDK's own integrations cover FlutterError and PlatformDispatcher errors,

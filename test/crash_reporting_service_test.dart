@@ -1,85 +1,161 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mornye/services/crash_reporting_service.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
+const _poisonUrl = 'https://api.example.com/track/secret-title';
+const _poisonPath = '/storage/emulated/0/Music/rahul/song.flac';
+const _poisonName = 'rahul';
+
 void main() {
-  group('scrubSentryEvent', () {
-    SentryEvent buildEvent() {
-      final contexts = Contexts()..device = SentryDevice(name: "Rahul's Pixel");
+  group('boundaryCrashEvent', () {
+    SentryEvent poisonedEvent() {
+      final contexts = Contexts()
+        ..device = SentryDevice(
+          name: "Rahul's Pixel",
+          model: 'Pixel 9',
+          manufacturer: 'Google',
+          arch: 'arm64',
+          brand: 'google',
+          simulator: false,
+          batteryLevel: 61,
+          freeMemory: 12345,
+        )
+        ..operatingSystem = SentryOperatingSystem(
+          name: 'Android',
+          version: '16',
+          kernelVersion: 'linux-$_poisonName',
+        )
+        ..app = SentryApp(
+          name: 'Mornye',
+          version: '5.3.0',
+          build: '166',
+          identifier: 'com.zarz.mornye',
+          viewNames: ['/library/$_poisonName'],
+        )
+        ..culture = SentryCulture(locale: 'en-US', timezone: 'Asia/Kolkata')
+        ..trace = SentryTraceContext(
+          traceId: SentryId.newId(),
+          spanId: SpanId.newId(),
+          operation: 'test',
+        );
+      contexts.runtimes = [
+        SentryRuntime(key: 'dart', name: 'Dart', version: '3.10.4'),
+      ];
       return SentryEvent(
-        user: SentryUser(id: '42', email: 'rahul@example.com'),
-        request: SentryRequest(url: 'https://api.example.com/private'),
-        message: SentryMessage(
-          'failed to load https://api.example.com/x?id=secret',
-        ),
+        user: SentryUser(id: '42', email: '$_poisonName@example.com'),
+        request: SentryRequest(url: _poisonUrl),
+        message: SentryMessage('failed to load $_poisonUrl'),
+        transaction: '/player/$_poisonName',
+        serverName: 'rahul-laptop',
+        tags: {'screen': _poisonName},
+        fingerprint: ['custom', _poisonName],
+        modules: {'sentry': '9.30.1'},
         exceptions: [
           SentryException(
             type: 'FileSystemException',
-            value: 'Cannot open /storage/emulated/0/Music/song.flac',
+            value: 'Cannot open $_poisonPath',
+            mechanism: Mechanism(
+              type: 'generic',
+              handled: true,
+              description: 'thrown at $_poisonPath',
+              helpLink: _poisonUrl,
+            ),
             stackTrace: SentryStackTrace(
               frames: [
                 SentryStackFrame(
                   absPath: '/data/user/0/com.example.app/lib/main.dart',
                   fileName: 'package:mornye/main.dart',
-                  function: 'main',
+                  function: '_main',
+                  package: 'mornye',
+                  module: 'mornye',
                   lineNo: 42,
-                  vars: {'path': '/home/rahul/Music'},
+                  colNo: 9,
+                  contextLine: 'openFile("$_poisonPath")',
+                  vars: {'path': _poisonPath},
+                  rawFunction: 'raw:$_poisonName',
+                  inApp: true,
+                ),
+                SentryStackFrame(
+                  absPath: '/home/rahul/x.dart',
+                  fileName: 'file:///home/rahul/lib/secret.dart',
+                  function: 'load $_poisonName',
+                  lineNo: 7,
                 ),
               ],
             ),
           ),
         ],
+        threads: [SentryThread(id: 1, name: 'isolate-$_poisonName')],
         breadcrumbs: [
-          Breadcrumb(
-            message: 'opened https://api.example.com/track/123',
-            data: {'url': 'https://api.example.com/track/123'},
-          ),
+          Breadcrumb(message: 'opened $_poisonUrl', data: {'u': _poisonUrl}),
         ],
         contexts: contexts,
         // ignore: deprecated_member_use
-        extra: {'path': '/home/rahul/Music'},
+        extra: {'path': _poisonPath},
       );
     }
 
-    test('removes all optional free text and identity', () {
-      final event = scrubSentryEvent(buildEvent());
+    test('drops every user/environment carrier by construction', () {
+      final event = boundaryCrashEvent(poisonedEvent());
       expect(event.user, isNull);
       expect(event.request, isNull);
       expect(event.message, isNull);
       expect(event.breadcrumbs, isNull);
+      expect(event.tags, isNull);
+      expect(event.fingerprint, isNull);
+      expect(event.transaction, isNull);
+      expect(event.serverName, isNull);
+      expect(event.threads, isNull);
+      expect(event.modules, isNull);
+      expect(event.debugMeta, isNull);
       // ignore: deprecated_member_use
-      expect(event.extra, isEmpty);
-      expect(event.contexts.device?.name, isNull);
+      expect(event.extra, isNull);
     });
 
-    test('keeps only exception type and code-provenance frames', () {
-      final event = scrubSentryEvent(buildEvent());
-      final exception = event.exceptions!.cast<SentryException>().first;
-      expect(exception.type, 'FileSystemException');
-      expect(exception.value, isNull);
-      final frame = exception.stackTrace!.frames.cast<SentryStackFrame>().first;
-      expect(frame.fileName, 'package:mornye/main.dart');
-      expect(frame.function, 'main');
-      expect(frame.lineNo, 42);
-      expect(frame.absPath, isNull);
-      expect(frame.vars, isEmpty);
-      final json = frame.toJson().toString();
-      expect(json, isNot(contains('rahul')));
-      expect(json, isNot(contains('abs_path')));
+    test('uses only fixed metadata and no source contexts', () {
+      final event = boundaryCrashEvent(poisonedEvent());
+      expect(event.logger, 'mornye.crash');
+      expect(event.platform, 'dart');
+      expect(event.contexts.toJson(), isEmpty);
+      expect(event.sdk?.name, 'mornye.crash');
+      expect(event.level, SentryLevel.error);
     });
 
-    test('serializes to JSON without any path, URL or title', () {
-      final event = scrubSentryEvent(buildEvent());
-      final json = jsonEncode(event.toJson());
-      expect(json, isNot(contains('api.example.com')));
-      expect(json, isNot(contains('/storage/emulated/0')));
-      expect(json, isNot(contains('rahul')));
-      expect(json, isNot(contains('song.flac')));
+    test('replaces exception, mechanism and frames entirely', () {
+      final event = boundaryCrashEvent(poisonedEvent());
+      final exception = event.exceptions!.cast<SentryException>().single;
+      expect(exception.type, 'Error');
+      expect(exception.value, 'Application error');
+      expect(exception.mechanism, isNull);
+      expect(exception.stackTrace, isNull);
+    });
+
+    test('does not trust token-shaped types or forged build metadata', () {
+      final source = SentryEvent(
+        sdk: SdkVersion(name: _poisonName, version: _poisonName),
+        release: _poisonName,
+        dist: _poisonName,
+        platform: _poisonName,
+        environment: _poisonName,
+        exceptions: [SentryException(type: _poisonName, value: null)],
+      );
+      final event = boundaryCrashEvent(source);
+      expect(jsonEncode(event.toJson()), isNot(contains(_poisonName)));
+      expect(event.eventId, isNot(source.eventId));
+    });
+
+    test('serialized JSON carries no poison anywhere', () {
+      final json = jsonEncode(boundaryCrashEvent(poisonedEvent()).toJson());
+      for (final poison in [_poisonUrl, _poisonPath, _poisonName]) {
+        expect(json, isNot(contains(poison)));
+      }
+      expect(json, isNot(contains('secret.dart')));
+      expect(json, isNot(contains('kernelVersion')));
     });
   });
 
@@ -97,11 +173,40 @@ void main() {
       ],
     );
 
-    test('drops attachment items, keeps the event', () async {
+    test('drops attachment items, keeps only the event', () async {
       final seen = <String>[];
       final transport = BoundaryTransport(_RecordingTransport(seen));
       await transport.send(mixedEnvelope());
       expect(seen, ['event']);
+    });
+
+    test('reconstructs raw event bytes and forged envelope headers', () async {
+      final recorded = <SentryEnvelope>[];
+      final transport = BoundaryTransport(_EnvelopeRecorder(recorded));
+      final forged = SentryEnvelope.fromEvent(
+        SentryEvent(
+          release: _poisonName,
+          message: SentryMessage(_poisonUrl),
+          exceptions: [SentryException(type: _poisonName, value: _poisonPath)],
+        ),
+        SdkVersion(name: _poisonName, version: _poisonName),
+        dsn: _poisonUrl,
+      );
+      await transport.send(forged);
+      final clean = recorded.single;
+      expect(clean.header.dsn, isNull);
+      expect(clean.header.traceContext, isNull);
+      expect(clean.header.sdkVersion?.name, 'mornye.crash');
+      expect(clean.header.eventId, isNot(forged.header.eventId));
+      final bytes = await clean
+          .envelopeStream(SentryOptions())
+          .expand((b) => b)
+          .toList();
+      final body = utf8.decode(bytes);
+      for (final poison in [_poisonName, _poisonPath, _poisonUrl]) {
+        expect(body, isNot(contains(poison)));
+      }
+      expect(body, contains('Application error'));
     });
 
     test('returns empty id when nothing may leave', () async {
@@ -121,55 +226,109 @@ void main() {
     });
   });
 
-  group('envelope proof (live SDK against local sink)', () {
-    test('real transport emits only scrubbed event envelopes', () async {
-      final sink = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      final captured = <String>[];
-      final arrived = Completer<void>();
-      final serverSub = sink.listen((request) async {
-        var bytes = <int>[];
-        await for (final chunk in request) {
-          bytes.addAll(chunk);
+  group('envelope proof (live SDK 9.30.1 against local sink)', () {
+    test(
+      'adversarial all-carrier event emits only the fixed generic shape',
+      () async {
+        final sink = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final captured = <String>[];
+        final arrived = Completer<void>();
+        final serverSub = sink.listen((request) async {
+          var bytes = <int>[];
+          await for (final chunk in request) {
+            bytes.addAll(chunk);
+          }
+          if (request.headers.value('content-encoding') == 'gzip') {
+            bytes = gzip.decode(bytes);
+          }
+          captured.add(utf8.decode(bytes));
+          request.response.statusCode = 200;
+          await request.response.close();
+          if (!arrived.isCompleted) arrived.complete();
+        });
+        addTearDown(() async {
+          await serverSub.cancel();
+          await sink.close();
+        });
+
+        await initCrashReporting(
+          dsnOverride: 'http://public@localhost:${sink.port}/1',
+          forceEnable: true,
+        );
+
+        // Poison every carrier the SDK offers: scope user, tags, custom
+        // context, breadcrumb, attachment, fingerprint, transaction.
+        await Sentry.configureScope((scope) async {
+          await scope.setUser(SentryUser(id: _poisonName));
+          await scope.setTag('poison', _poisonName);
+          scope.transaction = '/player/$_poisonName';
+          scope.fingerprint = [_poisonName];
+          scope.setContexts('evil', {'note': _poisonPath});
+          await scope.addBreadcrumb(Breadcrumb(message: 'visited $_poisonUrl'));
+          scope.addAttachment(
+            SentryAttachment.fromUint8List(
+              Uint8List.fromList(utf8.encode(_poisonPath)),
+              'evil.txt',
+            ),
+          );
+        });
+
+        final probe = StateError(
+          'probe ${DateTime.now().microsecondsSinceEpoch} '
+          '$_poisonUrl $_poisonPath $_poisonName',
+        );
+        await Sentry.captureException(probe, stackTrace: StackTrace.current);
+        await Sentry.close();
+
+        await arrived.future.timeout(const Duration(seconds: 20));
+        expect(captured, isNotEmpty);
+        final body = captured.join('\n');
+
+        // Negative proof over the actual emitted envelope bytes.
+        for (final poison in [
+          _poisonUrl,
+          _poisonPath,
+          _poisonName,
+          'evil',
+          'log.txt',
+        ]) {
+          expect(body, isNot(contains(poison)), reason: 'leaked: $poison');
         }
-        if (request.headers.value('content-encoding') == 'gzip') {
-          bytes = gzip.decode(bytes);
-        }
-        captured.add(utf8.decode(bytes));
-        request.response.statusCode = 200;
-        await request.response.close();
-        if (!arrived.isCompleted) arrived.complete();
-      });
-      addTearDown(() async {
-        await serverSub.cancel();
-        await sink.close();
-      });
+        expect(body, isNot(contains('"attachment"')));
+        expect(body, isNot(contains('"session"')));
+        expect(body, isNot(contains('"replay')));
+        expect(body, isNot(contains('client_report')));
 
-      final dsn = 'http://public@localhost:${sink.port}/1';
-      await initCrashReporting(dsnOverride: dsn, forceEnable: true);
+        // Positive proof: only the fixed generic error marker arrives.
+        expect(body, contains('Application error'));
+        expect(body, isNot(contains('StateError')));
 
-      final probe = StateError(
-        'probe ${DateTime.now().microsecondsSinceEpoch} '
-        'https://api.example.com/track/secret-title '
-        '/storage/emulated/0/Music/rahul/song.flac',
-      );
-      await Sentry.captureException(probe, stackTrace: StackTrace.current);
-      await Sentry.close();
-
-      await arrived.future.timeout(const Duration(seconds: 20));
-      expect(captured, isNotEmpty);
-      final body = captured.join('\n');
-      // Negative proof: no URL, no local path, no personal string, no
-      // free-text exception value, no attachment/session/replay items.
-      expect(body, isNot(contains('api.example.com')));
-      expect(body, isNot(contains('secret-title')));
-      expect(body, isNot(contains('/storage/emulated/0')));
-      expect(body, isNot(contains('rahul')));
-      expect(body, isNot(contains('"attachment"')));
-      expect(body, isNot(contains('"session"')));
-      expect(body, isNot(contains('"replay')));
-      // Positive proof: the generic error still arrives.
-      expect(body, contains('StateError'));
-    }, timeout: const Timeout(Duration(seconds: 60)));
+        // Structural proof: only allowlisted context keys in the event.
+        final eventLine = body
+            .split('\n')
+            .firstWhere((line) => line.contains('"exception"'));
+        final json = jsonDecode(eventLine) as Map<String, dynamic>;
+        expect(json['contexts'], isNull);
+        expect(json.keys.toSet(), {
+          'event_id',
+          'timestamp',
+          'sdk',
+          'platform',
+          'logger',
+          'release',
+          'dist',
+          'environment',
+          'level',
+          'exception',
+        });
+        expect(json['exception'], {
+          'values': [
+            {'type': 'Error', 'value': 'Application error'},
+          ],
+        });
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
   });
 }
 
@@ -183,5 +342,15 @@ class _RecordingTransport implements Transport {
       seen.add(item.header.type);
     }
     return SentryId.newId();
+  }
+}
+
+class _EnvelopeRecorder implements Transport {
+  _EnvelopeRecorder(this.seen);
+  final List<SentryEnvelope> seen;
+  @override
+  Future<SentryId?> send(SentryEnvelope envelope) async {
+    seen.add(envelope);
+    return envelope.header.eventId;
   }
 }
