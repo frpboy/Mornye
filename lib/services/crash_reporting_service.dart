@@ -73,29 +73,38 @@ SentryEvent _genericCrashEvent() => SentryEvent(
 
 /// Final boundary, installed during init. Original event bytes, envelope
 /// headers and item headers are never forwarded. At most one fresh generic
-/// marker leaves per envelope containing an event. All other item types
-/// (including attachments and client reports) are dropped without reading.
+/// marker leaves per accepted error. All other item types (including
+/// attachments and client reports) are dropped without reading.
 ///
-/// Reliability bounds (all process-local; nothing here claims exact-once,
-/// duplicates are possible):
-/// - 429 backoff: the SDK's own client-side rate limiter is null when a
-///   custom transport is installed, so [HttpTransport]'s [RateLimiter] is
-///   consulted here before every send. A 429 (or X-Sentry-Rate-Limits)
-///   response on the error category suppresses further sends until the
-///   server-provided retry window elapses.
-/// - Local cap: at most [maxEventsPerMinute] error events per rolling
-///   minute per process, so a crash loop cannot drain the shared free
-///   quota. Excess events are dropped silently.
-/// - Concurrency: sends are serialized through one chain; a send waits for
-///   the previous one to settle.
-/// - Deadline: each send is abandoned after [sendDeadline]; a stuck socket
-///   cannot wedge the chain.
+/// Reliability bounds (all process-local; duplicates are possible and this
+/// does NOT guarantee quota protection):
+/// - No queue: the caller's raw envelope is never retained. While a send
+///   is truly in flight, or any limit says no, the error is dropped
+///   immediately with an empty id. Nothing drips out later.
+/// - 429 backoff at enqueue: the SDK's own client-side rate limiter is
+///   null when a custom transport is installed, so [HttpTransport]'s
+///   [RateLimiter] is consulted before every send. A 429 (or
+///   X-Sentry-Rate-Limits) response on the error category suppresses
+///   further sends until the server-provided retry window elapses.
+/// - Local caps at enqueue: at most [maxEventsPerMinute] error event per
+///   rolling minute and at most [maxEventsPerProcess] per process
+///   lifetime. This reduces shared free-quota spend; it does NOT
+///   eliminate it - every process restart gets a fresh allowance, so a
+///   tight crash-restart loop can still spend quota.
+/// - One in flight, really: [_busy] clears only when the inner send
+///   actually completes. [sendDeadline] is COOPERATIVE - Dart cannot
+///   cancel the underlying HTTP request through this transport - so
+///   callers see an early empty result while the socket remains the
+///   single in-flight request until it truly completes or aborts. A
+///   permanently stuck connection drops later crash reports rather than
+///   multiplying requests.
 class BoundaryTransport implements Transport {
   BoundaryTransport(
     this._inner,
     this._rateLimiter,
     this._clock, {
-    this.maxEventsPerMinute = 10,
+    this.maxEventsPerMinute = 1,
+    this.maxEventsPerProcess = 20,
     this.sendDeadline = const Duration(seconds: 30),
   });
 
@@ -103,53 +112,56 @@ class BoundaryTransport implements Transport {
   final RateLimiter _rateLimiter;
   final DateTime Function() _clock;
   final int maxEventsPerMinute;
+  final int maxEventsPerProcess;
   final Duration sendDeadline;
 
   final List<DateTime> _sentAt = <DateTime>[];
-  Future<SentryId?> _chain = Future<SentryId?>.value();
+  int _sentTotal = 0;
+  bool _busy = false;
 
   @override
   Future<SentryId?> send(SentryEnvelope envelope) {
-    final result = _chain.then((_) => _sendBounded(envelope));
-    // Keep the chain alive after a failure so later sends still run.
-    _chain = result.then((id) => id, onError: (_) => SentryId.empty());
-    return result;
-  }
-
-  Future<SentryId?> _sendBounded(SentryEnvelope envelope) async {
-    // Remote backoff: drop when the server rate-limited the error
-    // category. The inner HTTP transport records 429/Retry-After
-    // responses on this same limiter instance.
+    // Drop-while-busy: no queue, so raw envelopes (and their
+    // attachments) are never held in memory.
+    if (_busy || _sentTotal >= maxEventsPerProcess) {
+      return Future.value(SentryId.empty());
+    }
+    // Remote backoff at enqueue: the inner HTTP transport records
+    // 429/Retry-After responses on this same limiter instance.
     final filtered = _rateLimiter.filter(envelope);
     if (filtered == null ||
         !filtered.items.any((item) => item.header.type == 'event')) {
-      return SentryId.empty();
+      return Future.value(SentryId.empty());
     }
-    // Local cap: bounds shared-quota spend during error loops.
+    // Local caps at enqueue.
     final now = _clock();
     _sentAt.removeWhere(
       (sent) => now.difference(sent) > const Duration(minutes: 1),
     );
     if (_sentAt.length >= maxEventsPerMinute) {
-      return SentryId.empty();
+      return Future.value(SentryId.empty());
     }
     _sentAt.add(now);
-    try {
-      return await _inner
-          .send(SentryEnvelope.fromEvent(_genericCrashEvent(), _boundarySdk()))
-          .timeout(sendDeadline, onTimeout: SentryId.empty);
-    } catch (_) {
-      return SentryId.empty();
-    }
+    _sentTotal++;
+    // Only the fresh generic marker is built and sent; the raw envelope
+    // goes out of scope here and is never referenced again.
+    _busy = true;
+    final real = _inner
+        .send(SentryEnvelope.fromEvent(_genericCrashEvent(), _boundarySdk()))
+        .then((id) => id, onError: (_) => SentryId.empty())
+        .whenComplete(() => _busy = false);
+    return real.timeout(sendDeadline, onTimeout: SentryId.empty);
   }
 }
 
 bool _initialized = false;
 
 /// Initializes the Dart-layer Sentry SDK for release builds. Call after the
-/// app's own error handlers are installed: the SDK's default integrations
-/// chain onto them and capture each error exactly once. Uncaught zone errors
-/// are not covered by those integrations and must call [reportCrashError].
+/// app's own error handlers are installed so the SDK's default integrations
+/// chain onto them; those handlers must then not also call
+/// [reportCrashError], or the same error would be reported twice. Uncaught
+/// zone errors are not covered by those integrations and must call
+/// [reportCrashError]. No exact-once guarantee: duplicates are possible.
 Future<void> initCrashReporting({
   @visibleForTesting String? dsnOverride,
   @visibleForTesting bool forceEnable = false,

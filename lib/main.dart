@@ -159,8 +159,9 @@ void main() {
         return true;
       };
       // Initialized after the handlers above so the SDK's default
-      // integrations chain onto them and capture each error exactly once;
-      // these handlers must therefore not also call reportCrashError.
+      // integrations chain onto them; these handlers must therefore not
+      // also call reportCrashError, or the same error would be reported
+      // twice. No exact-once guarantee: duplicates remain possible.
       await initCrashReporting();
 
       final prefs = await preferences;

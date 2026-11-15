@@ -168,9 +168,13 @@ void main() {
   group('BoundaryTransport', () {
     final sdk = SdkVersion(name: 'test', version: '0.0.0');
 
+    SentryEnvelope eventEnvelope() =>
+        SentryEnvelope.fromEvent(SentryEvent(), sdk);
+
     BoundaryTransport recorderTransport(
       Transport inner, {
       int maxEventsPerMinute = 10,
+      int maxEventsPerProcess = 20,
       Duration sendDeadline = const Duration(seconds: 30),
     }) {
       final options = SentryOptions();
@@ -179,6 +183,7 @@ void main() {
         RateLimiter(options),
         options.clock,
         maxEventsPerMinute: maxEventsPerMinute,
+        maxEventsPerProcess: maxEventsPerProcess,
         sendDeadline: sendDeadline,
       );
     }
@@ -254,53 +259,81 @@ void main() {
         rateLimiter,
         options.clock,
       );
-      final envelope = SentryEnvelope.fromEvent(SentryEvent(), sdk);
 
-      await transport.send(envelope);
+      await transport.send(eventEnvelope());
       expect(requests, 1);
       // The 429 with Retry-After suppresses further error sends locally:
       // no second HTTP request may leave until the window elapses.
-      final id = await transport.send(envelope);
+      final id = await transport.send(eventEnvelope());
       expect(id, SentryId.empty());
       expect(requests, 1);
     });
 
-    test('drops events beyond the local per-minute cap', () async {
+    test('drops events beyond the per-minute cap at enqueue', () async {
       final seen = <SentryEnvelope>[];
       final transport = recorderTransport(
         _EnvelopeRecorder(seen),
         maxEventsPerMinute: 3,
       );
-      final envelope = SentryEnvelope.fromEvent(SentryEvent(), sdk);
       for (var i = 0; i < 5; i++) {
-        await transport.send(envelope);
+        await transport.send(eventEnvelope());
       }
       expect(seen.length, 3);
     });
 
-    test('serializes concurrent sends', () async {
-      final slow = _SlowTransport(const Duration(milliseconds: 20));
-      final transport = recorderTransport(slow);
-      final envelope = SentryEnvelope.fromEvent(SentryEvent(), sdk);
-      await Future.wait([for (var i = 0; i < 4; i++) transport.send(envelope)]);
-      expect(slow.completed, 4);
-      expect(slow.maxInFlight, 1);
+    test('process lifetime cap stops a long crash loop', () async {
+      final seen = <SentryEnvelope>[];
+      final transport = recorderTransport(
+        _EnvelopeRecorder(seen),
+        maxEventsPerMinute: 100,
+        maxEventsPerProcess: 2,
+      );
+      for (var i = 0; i < 5; i++) {
+        await transport.send(eventEnvelope());
+      }
+      expect(seen.length, 2);
     });
 
     test(
-      'abandons a stuck send after the deadline and keeps the chain',
+      'no queue: concurrent sends are dropped while one is in flight',
       () async {
-        final transport = recorderTransport(
-          _NeverTransport(),
-          sendDeadline: const Duration(milliseconds: 100),
-        );
-        final envelope = SentryEnvelope.fromEvent(SentryEvent(), sdk);
-        final id = await transport.send(envelope);
-        expect(id, SentryId.empty());
-        // The chain must still settle the next send instead of wedging.
-        await transport.send(envelope).timeout(const Duration(seconds: 5));
+        final slow = _SlowTransport(const Duration(milliseconds: 100));
+        final transport = recorderTransport(slow);
+        final results = await Future.wait([
+          for (var i = 0; i < 4; i++) transport.send(eventEnvelope()),
+        ]);
+        // Exactly one send reached the network; the other three were
+        // dropped immediately, not retained for later.
+        expect(slow.completed, 1);
+        expect(results.where((id) => id == SentryId.empty()).length, 3);
       },
     );
+
+    test('deadline is cooperative: caller returns early, guard holds until '
+        'real completion, new errors dropped meanwhile', () async {
+      final gate = Completer<SentryId?>();
+      final inner = _GatedTransport(gate.future);
+      final transport = recorderTransport(
+        inner,
+        sendDeadline: const Duration(milliseconds: 100),
+      );
+      // The underlying send never resolves within the deadline: the
+      // CALLER sees an early empty id.
+      final first = await transport.send(eventEnvelope());
+      expect(first, SentryId.empty());
+      expect(inner.calls, 1);
+      // While the socket is truly in flight, new errors are dropped
+      // immediately - no second request, nothing queued.
+      final dropped = await transport.send(eventEnvelope());
+      expect(dropped, SentryId.empty());
+      expect(inner.calls, 1);
+      // Once the socket really completes, sends are accepted again.
+      gate.complete(SentryId.newId());
+      // Let the real send's completion microtasks clear the busy guard.
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await transport.send(eventEnvelope()).timeout(const Duration(seconds: 5));
+      expect(inner.calls, 2);
+    });
 
     test('returns empty id when nothing may leave', () async {
       final seen = <String>[];
@@ -441,6 +474,7 @@ class _RecordingTransport implements Transport {
 class _EnvelopeRecorder implements Transport {
   _EnvelopeRecorder(this.seen);
   final List<SentryEnvelope> seen;
+
   @override
   Future<SentryId?> send(SentryEnvelope envelope) async {
     seen.add(envelope);
@@ -451,26 +485,24 @@ class _EnvelopeRecorder implements Transport {
 class _SlowTransport implements Transport {
   _SlowTransport(this.delay);
   final Duration delay;
-  int inFlight = 0;
-  int maxInFlight = 0;
   int completed = 0;
 
   @override
   Future<SentryId?> send(SentryEnvelope envelope) async {
-    inFlight++;
-    if (inFlight > maxInFlight) maxInFlight = inFlight;
-    try {
-      await Future<void>.delayed(delay);
-      completed++;
-      return envelope.header.eventId;
-    } finally {
-      inFlight--;
-    }
+    await Future<void>.delayed(delay);
+    completed++;
+    return envelope.header.eventId;
   }
 }
 
-class _NeverTransport implements Transport {
+class _GatedTransport implements Transport {
+  _GatedTransport(this.gate);
+  final Future<SentryId?> gate;
+  int calls = 0;
+
   @override
-  Future<SentryId?> send(SentryEnvelope envelope) =>
-      Completer<SentryId?>().future;
+  Future<SentryId?> send(SentryEnvelope envelope) {
+    calls++;
+    return gate;
+  }
 }
