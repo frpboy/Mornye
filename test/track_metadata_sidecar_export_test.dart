@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -206,13 +207,41 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text(label), findsOneWidget);
         await tester.tap(find.text(label));
-        await _settleIo(tester);
-        expect(
+        final output = File('${directory.path}/$base.$extension');
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        Future<bool> exportIsComplete() async {
+          try {
+            if (!await output.exists()) return false;
+            if (extension == 'jpg') {
+              if (!listEquals(await output.readAsBytes(), cover)) return false;
+            } else if (await output.readAsString() != lyrics) {
+              return false;
+            }
+            for (final path in staged) {
+              if (await File(path).parent.exists()) return false;
+            }
+            return true;
+          } on FileSystemException {
+            return false;
+          }
+        }
+
+        while (!((await tester.runAsync(exportIsComplete)) ?? false)) {
+          if (DateTime.now().isAfter(deadline)) {
+            fail(
+              'Export $extension did not finish content and staging cleanup for '
+              '${output.path} within 5 seconds. Staged paths: $staged. '
+              'Backend calls: ${calls.map((call) => call.method).join(', ')}. '
+              'Snackbars: ${tester.widgetList<Text>(find.descendant(of: find.byType(SnackBar), matching: find.byType(Text))).map((text) => text.data).join(' | ')}',
+            );
+          }
+          await tester.pump(const Duration(milliseconds: 20));
           await tester.runAsync(
-            () => File('${directory.path}/$base.$extension').exists(),
-          ),
-          isTrue,
-        );
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+        }
+        await tester.pumpAndSettle();
+        expect(await tester.runAsync(output.exists), isTrue);
       }
       await tester.runAsync(() async {
         expect(await File('${directory.path}/$base.jpg').readAsBytes(), cover);

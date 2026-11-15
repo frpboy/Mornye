@@ -482,11 +482,45 @@ void main() {
           return _capture(tester, dpr);
         }
 
+        final band = await capture(_bandMask);
+        final whole = await capture(_wholeBoxMask);
+        if (cover != _translucent) {
+          _expectRounding(band, whole, opaque: true, reason: cover.path);
+          continue;
+        }
+        final logical = physical / dpr;
+        final coverHeight = logical.width < logical.height * 0.56
+            ? logical.height * 0.56
+            : logical.width.clamp(0.0, logical.height * 0.62);
+        final fadeTop = (coverHeight * 0.72 * dpr).floor() - 1;
+        // Check the physical split as well as pixel differences. A geometry
+        // change must not silently move pixels into the less strict region.
+        expect(fadeTop, switch ((physical.width.round(), dpr)) {
+          (160, 1.0) => 128,
+          (540, 3.0) => 470,
+          (1080, 2.625) => 942,
+          (800, 2.0) => 445,
+          _ => throw StateError('Unmeasured physical size and DPR'),
+        });
+        final split = fadeTop * physical.width.round() * 4;
+        final above = _difference(
+          Uint8List.sublistView(band, 0, split),
+          Uint8List.sublistView(whole, 0, split),
+        );
+        // Directly drawing translucent pixels skips the whole-box mask's
+        // 8-bit offscreen composite. Across all four measured Linux sizes,
+        // sparse two-level differences stay above the fade, never in it.
+        expect(above.max, lessThanOrEqualTo(2), reason: cover.path);
+        var twoLevelChannels = 0;
+        for (var i = 0; i < split; i++) {
+          if ((band[i] - whole[i]).abs() > 1) twoLevelChannels++;
+        }
+        expect(twoLevelChannels, lessThan(split ~/ 1500), reason: cover.path);
         _expectRounding(
-          await capture(_bandMask),
-          await capture(_wholeBoxMask),
-          opaque: cover != _translucent,
-          reason: cover.path,
+          Uint8List.sublistView(band, split),
+          Uint8List.sublistView(whole, split),
+          opaque: false,
+          reason: '${cover.path}: fade band',
         );
       }
     });

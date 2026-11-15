@@ -1,0 +1,183 @@
+name: Windows feature qualification (unsigned test artifacts)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/windows-feature-qualification.yml"
+      - "scripts/smoke_windows_qualification.ps1"
+      - "lib/utils/playback_artwork.dart"
+      - "lib/widgets/desktop/desktop_now_playing.dart"
+      - "lib/widgets/mornye_player_background.dart"
+      - "lib/theme/cover_palette.dart"
+      - "lib/theme/mornye_theme.dart"
+      - "test/playback_artwork_test.dart"
+      - "test/expanded_player_gradient_test.dart"
+      - "test/expanded_player_colours_test.dart"
+      - "test/mornye_player_background_test.dart"
+      - "test/cover_palette_grayscale_test.dart"
+      - "scripts/package_windows.ps1"
+      - "scripts/check_windows_bundle.ps1"
+      - "windows/**"
+      - "pubspec.yaml"
+      - "pubspec.lock"
+      - ".fvmrc"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-feature-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Windows app (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2022
+            rust_target: x86_64-pc-windows-msvc
+          - arch: arm64
+            runner: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # rquickjs uses its prebuilt Windows MSVC bindings, so the job needs no
+      # LLVM; the runner's MSVC toolchain is enough.
+      - name: Activate pinned Rust toolchain
+        working-directory: rust_backend
+        run: |
+          rustup show
+          rustup target add ${{ matrix.rust_target }}
+
+      # Runs the Windows-only extension sandbox and junction tests.
+      - name: Test Rust core and extensions
+        working-directory: rust_backend
+        run: cargo test -p mornye-extensions -p mornye-core --target ${{ matrix.rust_target }}
+
+      - name: Build Rust desktop library
+        run: ./scripts/build_rust_backend_windows.ps1 -Target ${{ matrix.rust_target }}
+
+      # Git Bash provides curl, unzip and sha256sum for the fetch script.
+      - name: Fetch LGPL FFmpeg
+        shell: bash
+        run: bash scripts/fetch_desktop_ffmpeg.sh windows-${{ matrix.arch }}
+
+      - name: Setup Flutter
+        if: matrix.arch == 'x64'
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          flutter-version-file: .fvmrc
+          cache: false
+          pub-cache: false
+
+      - name: Setup native ARM64 Flutter
+        if: matrix.arch == 'arm64'
+        run: ./scripts/setup_flutter_windows_arm64.ps1
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Prepare Flutter framework patch
+        run: dart scripts/prepare_flutter_sdk.dart
+
+      # windows/CMakeLists.txt installs the library built above next to
+      # mornye.exe and the FFmpeg tools staged above into ffmpeg\.
+      - name: Test desktop, artwork and all colour fixtures on Windows
+        env:
+          MORNYE_CAPTURE_DIR: build/desktop/player-renders
+        run: >-
+          flutter test --no-pub --reporter expanded --concurrency=1 --timeout 90s
+          test/duplicate_review_sheet_test.dart test/desktop_updater_test.dart
+          test/settings_bottom_inset_test.dart test/semantics_geometry_regression_test.dart
+          test/playback_artwork_test.dart test/expanded_player_gradient_test.dart
+          test/expanded_player_colours_test.dart test/mornye_player_background_test.dart
+          test/cover_palette_grayscale_test.dart
+
+      - name: Verify preinstalled pinned Inno Setup (no package install fallback)
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc -PathType Leaf)) { throw 'Pinned Inno Setup 6.7.1 is not preinstalled.' }
+          # ISCC.exe's PE ProductVersion is 0.0.0.0 on these runner images.
+          # Inno 6.7.1 has no --version option. A no-output compilation prints
+          # the actual compiler DLL's engine version (ISDllGetVersion).
+          $probe = Join-Path $env:RUNNER_TEMP 'inno-version-probe.iss'
+          @(
+            '[Setup]'
+            'AppName=Mornye compiler qualification probe'
+            'AppVersion=0.0.0'
+            'CreateAppDir=no'
+            'Uninstallable=no'
+            'Output=no'
+          ) | Set-Content -Encoding utf8 $probe
+          $probeOutput = & $iscc '/O-' $probe 2>&1
+          $probeExit = $LASTEXITCODE
+          $probeOutput | ForEach-Object { Write-Host $_ }
+          if ($probeExit -ne 0) { throw "Inno compiler probe failed: $probeExit" }
+          $engine = @($probeOutput | Where-Object { "$_" -match '^Compiler engine version: ' })
+          if ($engine.Count -ne 1 -or "$($engine[0])" -cne 'Compiler engine version: Inno Setup 6.7.1') {
+            throw "Unexpected Inno Setup compiler engine: $($engine -join '; ')"
+          }
+          (Split-Path $iscc) >> $env:GITHUB_PATH
+
+      - name: Build Windows app
+        run: |
+          $commit = git rev-parse --short=8 HEAD
+          flutter build windows --release --target lib/main.dart --dart-define="GIT_COMMIT=$commit"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify and package unsigned qualification installer
+        run: |
+          $bundle = 'build\windows\${{ matrix.arch }}\runner\Release'
+          ./scripts/check_windows_bundle.ps1 -BundleDir $bundle -Arch ${{ matrix.arch }}
+          $line = Get-Content pubspec.yaml | Where-Object { $_ -match '^version: ' } | Select-Object -First 1
+          $base = (($line -replace '^version: ', '') -split '\+')[0]
+          $version = "$base-qual.$env:GITHUB_RUN_ID"
+          ./scripts/package_windows.ps1 -Version $version -Arch ${{ matrix.arch }} -BundleDir $bundle
+          $installer = Get-Item "build\desktop\Mornye-$version-windows-${{ matrix.arch }}-setup.exe"
+          if ((Get-AuthenticodeSignature $installer.FullName).Status -ne 'NotSigned') {
+            throw 'Qualification workflow expects an unsigned test installer, not a release signer.'
+          }
+          ./scripts/smoke_windows_qualification.ps1 -Installer $installer.FullName -Arch ${{ matrix.arch }}
+          $lines = Get-ChildItem build\desktop -File | Where-Object { $_.Extension -in '.exe', '.zip' } | Sort-Object Name | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(), $_.Name
+          }
+          $lines | Set-Content build\desktop\SHA256SUMS.txt
+          @{
+            source = (git rev-parse HEAD)
+            arch = '${{ matrix.arch }}'
+            version = $version
+            signing = 'unsigned qualification only, not a stable release'
+            warning = 'Installer retains the existing Mornye app identity, publisher metadata, URL handler and updater. It can replace an existing installation. Fresh-runner smoke is not user-PC or audio-library validation.'
+          } | ConvertTo-Json | Set-Content build\desktop\qualification.json
+
+      - name: Upload Windows qualification evidence
+        if: success() || failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: UNSIGNED-TEST-windows-qualification-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            build/desktop/Mornye-*-setup.exe
+            build/desktop/Mornye-*-portable.zip
+            build/desktop/SHA256SUMS.txt
+            build/desktop/qualification.json
+            build/desktop/smoke-*.json
+            build/desktop/smoke-*.png
+            build/desktop/install-*.log
+            build/desktop/player-renders/expanded-*.png

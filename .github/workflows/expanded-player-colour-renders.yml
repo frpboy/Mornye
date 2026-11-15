@@ -1,0 +1,72 @@
+name: Expanded player colour renders
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "lib/widgets/desktop/desktop_now_playing.dart"
+      - "lib/widgets/mornye_player_background.dart"
+      - "lib/theme/cover_palette.dart"
+      - "lib/theme/mornye_theme.dart"
+      - "test/expanded_player_colours_test.dart"
+      - "test/expanded_player_gradient_test.dart"
+      - "test/mornye_player_background_test.dart"
+      - "pubspec.yaml"
+      - "pubspec.lock"
+      - ".fvmrc"
+      - "scripts/prepare_flutter_sdk.dart"
+      - "patches/flutter/**"
+      - ".github/workflows/expanded-player-colour-renders.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: expanded-player-colours-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    name: Expanded player widget tests and synthetic renders
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pinned Flutter without persistent cache
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version-file: .fvmrc
+          cache: false
+          pub-cache: false
+
+      - name: Initialize Flutter SDK version metadata
+        run: flutter --version
+
+      - name: Prepare repository Flutter framework patch
+        run: dart scripts/prepare_flutter_sdk.dart
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Test gradients and render the actual expanded player widget
+        env:
+          MORNYE_CAPTURE_DIR: build/expanded-player-renders
+        run: >-
+          flutter test --no-pub --reporter expanded --concurrency=1
+          test/expanded_player_gradient_test.dart
+          test/expanded_player_colours_test.dart
+          test/mornye_player_background_test.dart
+          test/cover_palette_grayscale_test.dart
+
+      - name: Retain synthetic full-player screenshots for visual review
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: expanded-player-synthetic-renders
+          path: build/expanded-player-renders/expanded-*.png
+          if-no-files-found: error
+          retention-days: 1

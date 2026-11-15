@@ -130,28 +130,20 @@ void main() {
   test(
     'verification-interrupted downloads restore as failed and stay out of auto-run queue',
     () async {
-      final interrupted = _item(
-        2100,
-        status: DownloadStatus.downloading,
-      ).copyWith(
-        id: 'verification-interrupted',
-        error: 'Waiting for verification',
-        errorType: DownloadErrorType.verificationRequired,
-      );
-      final terminal = _item(
-        2101,
-        status: DownloadStatus.failed,
-      ).copyWith(
+      final interrupted = _item(2100, status: DownloadStatus.downloading)
+          .copyWith(
+            id: 'verification-interrupted',
+            error: 'Waiting for verification',
+            errorType: DownloadErrorType.verificationRequired,
+          );
+      final terminal = _item(2101, status: DownloadStatus.failed).copyWith(
         id: 'verification-failed',
         error: 'Verification did not complete',
         errorType: DownloadErrorType.verificationRequired,
       );
       // Older app versions persisted an interrupted verification handoff as
       // queued, so the decoder must recognise that legacy representation too.
-      final legacyQueued = _item(
-        2102,
-        status: DownloadStatus.queued,
-      ).copyWith(
+      final legacyQueued = _item(2102, status: DownloadStatus.queued).copyWith(
         id: 'legacy-verification-queued',
         error: 'Waiting for verification',
         errorType: DownloadErrorType.verificationRequired,
@@ -186,14 +178,11 @@ void main() {
         restored.items.map((item) => item.errorType),
         everyElement(DownloadErrorType.verificationRequired),
       );
-      expect(
-        restored.items.map((item) => item.error),
-        [
-          'Waiting for verification',
-          'Verification did not complete',
-          'Waiting for verification',
-        ],
-      );
+      expect(restored.items.map((item) => item.error), [
+        'Waiting for verification',
+        'Verification did not complete',
+        'Waiting for verification',
+      ]);
     },
   );
 
