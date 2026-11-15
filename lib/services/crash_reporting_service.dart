@@ -75,19 +75,72 @@ SentryEvent _genericCrashEvent() => SentryEvent(
 /// headers and item headers are never forwarded. At most one fresh generic
 /// marker leaves per envelope containing an event. All other item types
 /// (including attachments and client reports) are dropped without reading.
+///
+/// Reliability bounds (all process-local; nothing here claims exact-once,
+/// duplicates are possible):
+/// - 429 backoff: the SDK's own client-side rate limiter is null when a
+///   custom transport is installed, so [HttpTransport]'s [RateLimiter] is
+///   consulted here before every send. A 429 (or X-Sentry-Rate-Limits)
+///   response on the error category suppresses further sends until the
+///   server-provided retry window elapses.
+/// - Local cap: at most [maxEventsPerMinute] error events per rolling
+///   minute per process, so a crash loop cannot drain the shared free
+///   quota. Excess events are dropped silently.
+/// - Concurrency: sends are serialized through one chain; a send waits for
+///   the previous one to settle.
+/// - Deadline: each send is abandoned after [sendDeadline]; a stuck socket
+///   cannot wedge the chain.
 class BoundaryTransport implements Transport {
-  BoundaryTransport(this._inner);
+  BoundaryTransport(
+    this._inner,
+    this._rateLimiter,
+    this._clock, {
+    this.maxEventsPerMinute = 10,
+    this.sendDeadline = const Duration(seconds: 30),
+  });
 
   final Transport _inner;
+  final RateLimiter _rateLimiter;
+  final DateTime Function() _clock;
+  final int maxEventsPerMinute;
+  final Duration sendDeadline;
+
+  final List<DateTime> _sentAt = <DateTime>[];
+  Future<SentryId?> _chain = Future<SentryId?>.value();
 
   @override
   Future<SentryId?> send(SentryEnvelope envelope) {
-    if (!envelope.items.any((item) => item.header.type == 'event')) {
-      return Future.value(SentryId.empty());
+    final result = _chain.then((_) => _sendBounded(envelope));
+    // Keep the chain alive after a failure so later sends still run.
+    _chain = result.then((id) => id, onError: (_) => SentryId.empty());
+    return result;
+  }
+
+  Future<SentryId?> _sendBounded(SentryEnvelope envelope) async {
+    // Remote backoff: drop when the server rate-limited the error
+    // category. The inner HTTP transport records 429/Retry-After
+    // responses on this same limiter instance.
+    final filtered = _rateLimiter.filter(envelope);
+    if (filtered == null ||
+        !filtered.items.any((item) => item.header.type == 'event')) {
+      return SentryId.empty();
     }
-    return _inner.send(
-      SentryEnvelope.fromEvent(_genericCrashEvent(), _boundarySdk()),
+    // Local cap: bounds shared-quota spend during error loops.
+    final now = _clock();
+    _sentAt.removeWhere(
+      (sent) => now.difference(sent) > const Duration(minutes: 1),
     );
+    if (_sentAt.length >= maxEventsPerMinute) {
+      return SentryId.empty();
+    }
+    _sentAt.add(now);
+    try {
+      return await _inner
+          .send(SentryEnvelope.fromEvent(_genericCrashEvent(), _boundarySdk()))
+          .timeout(sendDeadline, onTimeout: SentryId.empty);
+    } catch (_) {
+      return SentryId.empty();
+    }
   }
 }
 
@@ -127,10 +180,10 @@ Future<void> initCrashReporting({
         ..replay.sessionSampleRate = 0.0
         ..replay.onErrorSampleRate = 0.0
         // Installed now, during init, so no integration can emit through an
-        // unfiltered transport. Pins the pure-Dart HTTP path.
-        ..transport = BoundaryTransport(
-          HttpTransport(options, RateLimiter(options)),
-        )
+        // unfiltered transport. Pins the pure-Dart HTTP path. The SAME rate
+        // limiter instance is shared: the HTTP transport records 429s on it
+        // and the boundary consults it before every send.
+        ..transport = _boundaryTransport(options)
         ..beforeSend = _beforeSend
         // Breadcrumbs are optional free text; never record them.
         ..beforeBreadcrumb = (crumb, hint) => null;
@@ -140,6 +193,15 @@ Future<void> initCrashReporting({
     // Reporting must never break startup.
     _log.w('Crash reporting init failed: $e');
   }
+}
+
+Transport _boundaryTransport(SentryOptions options) {
+  final rateLimiter = RateLimiter(options);
+  return BoundaryTransport(
+    HttpTransport(options, rateLimiter),
+    rateLimiter,
+    options.clock,
+  );
 }
 
 FutureOr<SentryEvent?> _beforeSend(SentryEvent event, Hint hint) =>

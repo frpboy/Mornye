@@ -6,6 +6,12 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mornye/services/crash_reporting_service.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+// The production boundary wires these same internal 9.30.1 classes; the
+// tests must exercise the real classes, pinned via pubspec.lock.
+// ignore: implementation_imports
+import 'package:sentry/src/transport/http_transport.dart';
+// ignore: implementation_imports
+import 'package:sentry/src/transport/rate_limiter.dart';
 
 const _poisonUrl = 'https://api.example.com/track/secret-title';
 const _poisonPath = '/storage/emulated/0/Music/rahul/song.flac';
@@ -162,6 +168,21 @@ void main() {
   group('BoundaryTransport', () {
     final sdk = SdkVersion(name: 'test', version: '0.0.0');
 
+    BoundaryTransport recorderTransport(
+      Transport inner, {
+      int maxEventsPerMinute = 10,
+      Duration sendDeadline = const Duration(seconds: 30),
+    }) {
+      final options = SentryOptions();
+      return BoundaryTransport(
+        inner,
+        RateLimiter(options),
+        options.clock,
+        maxEventsPerMinute: maxEventsPerMinute,
+        sendDeadline: sendDeadline,
+      );
+    }
+
     SentryEnvelope mixedEnvelope() => SentryEnvelope.fromEvent(
       SentryEvent(),
       sdk,
@@ -175,14 +196,14 @@ void main() {
 
     test('drops attachment items, keeps only the event', () async {
       final seen = <String>[];
-      final transport = BoundaryTransport(_RecordingTransport(seen));
+      final transport = recorderTransport(_RecordingTransport(seen));
       await transport.send(mixedEnvelope());
       expect(seen, ['event']);
     });
 
     test('reconstructs raw event bytes and forged envelope headers', () async {
       final recorded = <SentryEnvelope>[];
-      final transport = BoundaryTransport(_EnvelopeRecorder(recorded));
+      final transport = recorderTransport(_EnvelopeRecorder(recorded));
       final forged = SentryEnvelope.fromEvent(
         SentryEvent(
           release: _poisonName,
@@ -209,9 +230,81 @@ void main() {
       expect(body, contains('Application error'));
     });
 
+    test('honours 429 backoff recorded by the inner HTTP transport', () async {
+      final sink = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requests = 0;
+      final serverSub = sink.listen((request) async {
+        requests++;
+        await request.drain<void>();
+        request.response.statusCode = 429;
+        request.response.headers.set('retry-after', '60');
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await serverSub.cancel();
+        await sink.close();
+      });
+
+      final options = SentryOptions(
+        dsn: 'http://public@localhost:${sink.port}/1',
+      );
+      final rateLimiter = RateLimiter(options);
+      final transport = BoundaryTransport(
+        HttpTransport(options, rateLimiter),
+        rateLimiter,
+        options.clock,
+      );
+      final envelope = SentryEnvelope.fromEvent(SentryEvent(), sdk);
+
+      await transport.send(envelope);
+      expect(requests, 1);
+      // The 429 with Retry-After suppresses further error sends locally:
+      // no second HTTP request may leave until the window elapses.
+      final id = await transport.send(envelope);
+      expect(id, SentryId.empty());
+      expect(requests, 1);
+    });
+
+    test('drops events beyond the local per-minute cap', () async {
+      final seen = <SentryEnvelope>[];
+      final transport = recorderTransport(
+        _EnvelopeRecorder(seen),
+        maxEventsPerMinute: 3,
+      );
+      final envelope = SentryEnvelope.fromEvent(SentryEvent(), sdk);
+      for (var i = 0; i < 5; i++) {
+        await transport.send(envelope);
+      }
+      expect(seen.length, 3);
+    });
+
+    test('serializes concurrent sends', () async {
+      final slow = _SlowTransport(const Duration(milliseconds: 20));
+      final transport = recorderTransport(slow);
+      final envelope = SentryEnvelope.fromEvent(SentryEvent(), sdk);
+      await Future.wait([for (var i = 0; i < 4; i++) transport.send(envelope)]);
+      expect(slow.completed, 4);
+      expect(slow.maxInFlight, 1);
+    });
+
+    test(
+      'abandons a stuck send after the deadline and keeps the chain',
+      () async {
+        final transport = recorderTransport(
+          _NeverTransport(),
+          sendDeadline: const Duration(milliseconds: 100),
+        );
+        final envelope = SentryEnvelope.fromEvent(SentryEvent(), sdk);
+        final id = await transport.send(envelope);
+        expect(id, SentryId.empty());
+        // The chain must still settle the next send instead of wedging.
+        await transport.send(envelope).timeout(const Duration(seconds: 5));
+      },
+    );
+
     test('returns empty id when nothing may leave', () async {
       final seen = <String>[];
-      final transport = BoundaryTransport(_RecordingTransport(seen));
+      final transport = recorderTransport(_RecordingTransport(seen));
       final base = mixedEnvelope();
       final attachmentsOnly = SentryEnvelope(
         base.header,
@@ -353,4 +446,31 @@ class _EnvelopeRecorder implements Transport {
     seen.add(envelope);
     return envelope.header.eventId;
   }
+}
+
+class _SlowTransport implements Transport {
+  _SlowTransport(this.delay);
+  final Duration delay;
+  int inFlight = 0;
+  int maxInFlight = 0;
+  int completed = 0;
+
+  @override
+  Future<SentryId?> send(SentryEnvelope envelope) async {
+    inFlight++;
+    if (inFlight > maxInFlight) maxInFlight = inFlight;
+    try {
+      await Future<void>.delayed(delay);
+      completed++;
+      return envelope.header.eventId;
+    } finally {
+      inFlight--;
+    }
+  }
+}
+
+class _NeverTransport implements Transport {
+  @override
+  Future<SentryId?> send(SentryEnvelope envelope) =>
+      Completer<SentryId?>().future;
 }
