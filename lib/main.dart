@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:crypto/crypto.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -32,6 +33,7 @@ import 'package:mornye/services/app_navigation_service.dart';
 import 'package:mornye/services/app_orientation.dart';
 import 'package:mornye/services/activity_attachment.dart';
 import 'package:mornye/services/app_crash_service.dart';
+import 'package:mornye/services/crash_reporting_service.dart';
 import 'package:mornye/services/background_favorites.dart';
 import 'package:mornye/services/desktop_deep_links.dart';
 import 'package:mornye/services/desktop_diagnostics.dart';
@@ -156,6 +158,10 @@ void main() {
         unawaited(AppCrashService.recordRuntimeError(error, stack));
         return true;
       };
+      // Initialized after the handlers above so the SDK's default
+      // integrations chain onto them and capture each error exactly once;
+      // these handlers must therefore not also call reportCrashError.
+      await initCrashReporting();
 
       final prefs = await preferences;
       var bootstrapSettings = loadBootstrapSettings(prefs);
@@ -252,6 +258,9 @@ void main() {
     (error, stack) {
       _log.e('Uncaught zone error: $error');
       unawaited(AppCrashService.recordRuntimeError(error, stack));
+      // Zone errors escape both handler chains above, so the SDK's
+      // integrations never see them; report them here.
+      reportCrashError(error, stack);
     },
   );
 }

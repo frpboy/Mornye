@@ -44,6 +44,10 @@ dependencies:
   # 7.3.2 requires dbus 0.8, while desktop_drop 0.8.4 still requires 0.7.
   connectivity_plus: ^7.3.1
   crypto: ^3.0.8
+  # Minimal automatic crash reporting, release builds only. The Dart-layer
+  # boundary contract lives in lib/services/crash_reporting_service.dart;
+  # 10.x requires Dart >=3.12, above this repo's pinned SDK.
+  sentry_flutter: ^9.30.0
   # Mornye Link: finds the desktop app on the local network (mDNS).
   bonsoir: ^7.1.5
 
