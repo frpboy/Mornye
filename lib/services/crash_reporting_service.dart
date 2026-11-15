@@ -182,6 +182,8 @@ Future<void> initCrashReporting({
         ..tracesSampleRate = 0.0
         ..enableAutoSessionTracking = false
         ..attachScreenshot = false
+        // ignore: experimental_member_use - pinned 9.30.1; setting false
+        // keeps the experimental view-hierarchy capture off explicitly.
         ..attachViewHierarchy = false
         // The native envelope path does not pass through beforeSend; keep
         // every unqualified capture path off until envelopes are inspected.
@@ -209,10 +211,11 @@ Future<void> initCrashReporting({
 
 Transport _boundaryTransport(SentryOptions options) {
   final rateLimiter = RateLimiter(options);
+  // The local caps use wall-clock time; options.clock is SDK-internal.
   return BoundaryTransport(
     HttpTransport(options, rateLimiter),
     rateLimiter,
-    options.clock,
+    DateTime.now,
   );
 }
 

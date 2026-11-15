@@ -181,7 +181,7 @@ void main() {
       return BoundaryTransport(
         inner,
         RateLimiter(options),
-        options.clock,
+        DateTime.now,
         maxEventsPerMinute: maxEventsPerMinute,
         maxEventsPerProcess: maxEventsPerProcess,
         sendDeadline: sendDeadline,
@@ -257,7 +257,7 @@ void main() {
       final transport = BoundaryTransport(
         HttpTransport(options, rateLimiter),
         rateLimiter,
-        options.clock,
+        DateTime.now,
       );
 
       await transport.send(eventEnvelope());
