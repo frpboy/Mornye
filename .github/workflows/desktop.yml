@@ -170,12 +170,12 @@ jobs:
           # The image's libunwind-14-dev blocks GStreamer's libunwind-dev
           # dependency; asking for it first lets apt replace the LLVM one.
           sudo apt-get install -y libunwind-dev
+          # sentry_flutter's bundled sentry-native links libcurl on Linux.
           sudo apt-get install -y \
             clang cmake ninja-build pkg-config zip \
             libgtk-3-dev liblzma-dev libsecret-1-dev libstdc++-12-dev \
             libjson-glib-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             libasound2-dev libclang-dev libmpv-dev \
-            # sentry_flutter's bundled sentry-native links libcurl on Linux.
             libcurl4-openssl-dev zlib1g-dev
 
       # The arm64 runner image ships without rustup.
