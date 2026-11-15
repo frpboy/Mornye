@@ -182,8 +182,9 @@ Future<void> initCrashReporting({
         ..tracesSampleRate = 0.0
         ..enableAutoSessionTracking = false
         ..attachScreenshot = false
-        // ignore: experimental_member_use - pinned 9.30.1; setting false
-        // keeps the experimental view-hierarchy capture off explicitly.
+        // Setting false keeps the experimental view-hierarchy capture off
+        // explicitly. Pinned 9.30.1.
+        // ignore: experimental_member_use
         ..attachViewHierarchy = false
         // The native envelope path does not pass through beforeSend; keep
         // every unqualified capture path off until envelopes are inspected.
