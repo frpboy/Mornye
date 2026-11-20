@@ -1,0 +1,60 @@
+name: Async fixture qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "test/desktop_library_table_rows_test.dart"
+      - "test/link_phone_sources_test.dart"
+      - "test/cover_cache_info_repository_test.dart"
+      - ".github/workflows/async-fixture-qualification.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: async-fixtures-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    name: Targeted ${{ matrix.test-file }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        test-file:
+          - desktop_library_table_rows_test.dart
+          - link_phone_sources_test.dart
+          - cover_cache_info_repository_test.dart
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pinned Flutter without persistent cache
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version-file: .fvmrc
+          cache: false
+          pub-cache: false
+
+      - name: Initialize Flutter SDK version metadata
+        run: flutter --version
+
+      - name: Prepare repository Flutter framework patch
+        run: dart scripts/prepare_flutter_sdk.dart
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze changed fixture
+        run: timeout 3m flutter analyze --no-pub test/${{ matrix.test-file }}
+
+      - name: Run targeted file with bounded tests
+        run: >-
+          timeout 8m flutter test --no-pub --reporter expanded
+          --concurrency=1 --timeout 45s test/${{ matrix.test-file }}
