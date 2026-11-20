@@ -147,18 +147,35 @@ Future<List<Track>> libraryFolderTracks(
 }
 
 /// Parses an M3U, M3U8 or CSV playlist file named [fileName].
+///
+/// CSV rows carry no duration, so they are enriched through the configured
+/// metadata providers like the home-tab import does. Without this the bare
+/// tracks later fail provider matching (JioSaavn rejects an unknown
+/// duration). [metadataLookup] exists for tests.
 Future<List<PlaylistImportEntry>> parsePlaylistImportFile(
   Uint8List bytes,
-  String fileName,
-) async {
+  String fileName, {
+  void Function(int current, int total)? onProgress,
+  Future<List<Map<String, dynamic>>> Function(String query, int limit)?
+  metadataLookup,
+  bool Function()? isCancelled,
+}) async {
   final extension = p.extension(fileName).toLowerCase();
   if (extension == '.m3u' || extension == '.m3u8') {
     return compute(_parseM3uImport, bytes);
   }
-  final tracks = await CsvImportService.parsePlaylistInBackground(
+  var tracks = await CsvImportService.parsePlaylistInBackground(
     bytes,
     format: 'csv',
   );
+  if (tracks.isNotEmpty) {
+    tracks = await CsvImportService.enrichTracksMetadata(
+      tracks,
+      onProgress: onProgress,
+      lookup: metadataLookup,
+      isCancelled: isCancelled,
+    );
+  }
   return [for (final track in tracks) PlaylistImportEntry(track)];
 }
 

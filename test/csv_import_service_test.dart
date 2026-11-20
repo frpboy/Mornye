@@ -1,8 +1,78 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mornye/models/track.dart';
 import 'package:mornye/services/csv_import_service.dart';
 
 void main() {
+  test(
+    'cancelled enrichment returns the full list, partially enriched',
+    () async {
+      final tracks = List.generate(
+        4,
+        (i) => Track(
+          id: 'csv_$i',
+          name: 'Song $i',
+          artistName: 'Artist',
+          albumName: '',
+          duration: 0,
+        ),
+      );
+      var completed = 0;
+
+      final enriched = await CsvImportService.enrichTracksMetadata(
+        tracks,
+        concurrency: 1,
+        isCancelled: () => completed >= 2,
+        onProgress: (current, total) => completed = current,
+        lookup: (query, limit) async {
+          return [
+            {
+              'id': 'js-1',
+              'provider_id': 'jiosaavn',
+              'name': query.replaceFirst('Artist ', ''),
+              'artists': 'Artist',
+              'album_name': 'Album',
+              'duration_ms': 180000,
+              'isrc': 'INH102300001',
+            },
+          ];
+        },
+      );
+
+      expect(enriched.length, 4);
+      expect(enriched[0].duration, 180);
+      expect(enriched[1].duration, 180);
+      expect(enriched[2].duration, 0);
+      expect(enriched[2].id, 'csv_2');
+      expect(enriched[3].duration, 0);
+      expect(enriched[3].id, 'csv_3');
+    },
+  );
+
+  test(
+    'enrichment keeps the bare track when a provider lookup hangs',
+    () async {
+      const track = Track(
+        id: 'csv_1',
+        name: 'Song',
+        artistName: 'Artist',
+        albumName: '',
+        duration: 0,
+      );
+
+      final enriched = await CsvImportService.enrichTracksMetadata(
+        [track],
+        lookupTimeout: const Duration(milliseconds: 50),
+        lookup: (query, limit) =>
+            Completer<List<Map<String, dynamic>>>().future,
+      );
+
+      expect(enriched.single.id, 'csv_1');
+      expect(enriched.single.duration, 0);
+    },
+  );
+
   test(
     'playlist enrichment uses generic lookup with bounded concurrency',
     () async {

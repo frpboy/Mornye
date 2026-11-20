@@ -11,6 +11,7 @@ import 'package:mornye/providers/settings_provider.dart';
 import 'package:mornye/screens/playlist_reorder_page.dart';
 import 'package:mornye/theme/mornye_theme.dart';
 import 'package:mornye/widgets/app_icon.dart';
+import 'package:mornye/widgets/app_loading_indicator.dart';
 import 'package:mornye/widgets/create_playlist_sheet.dart';
 
 class _Settings extends SettingsNotifier {
@@ -84,6 +85,54 @@ Widget _app(Widget home, _Collections collections, {required bool mornye}) =>
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('playlist import progress dialog shows enrichment counts', (
+    tester,
+  ) async {
+    final collections = _Collections();
+    await tester.pumpWidget(
+      _app(
+        const Scaffold(
+          body: PlaylistImportProgressDialog(current: 3, total: 10),
+        ),
+        collections,
+        mornye: true,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Fetching metadata... 3/10'), findsOneWidget);
+    expect(find.byType(AppLoadingIndicator), findsOneWidget);
+    expect(find.text('Skip fetching'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('playlist import progress dialog cancel action fires', (
+    tester,
+  ) async {
+    final collections = _Collections();
+    var cancelled = 0;
+    await tester.pumpWidget(
+      _app(
+        Scaffold(
+          body: PlaylistImportProgressDialog(
+            current: 3,
+            total: 10,
+            onCancel: () => cancelled++,
+          ),
+        ),
+        collections,
+        mornye: true,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Skip fetching'), findsOneWidget);
+    await tester.tap(find.text('Skip fetching'));
+    await tester.pump();
+    expect(cancelled, 1);
+    expect(tester.takeException(), isNull);
+  });
   setUpAll(() async {
     await (FontLoader('packages/cupertino_icons/CupertinoIcons')..addFont(
           rootBundle.load('packages/cupertino_icons/assets/CupertinoIcons.ttf'),

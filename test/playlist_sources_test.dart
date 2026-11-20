@@ -75,6 +75,8 @@ class _Library extends Fake implements LibraryDatabase {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('folders come from SAF trees, plain paths and network shares', () {
     expect(libraryFolderPath(_document('Album/01.flac')), 'Album');
     expect(libraryFolderPath(_document('loose.flac')), '');
@@ -195,6 +197,61 @@ void main() {
       );
     },
   );
+
+  test('CSV imports are enriched through metadata providers', () async {
+    final bytes = Uint8List.fromList(
+      utf8.encode(
+        'Track name,Artist name\n'
+        'Chaleya,Arijit Singh\n',
+      ),
+    );
+    final queries = <String>[];
+    final progress = <int>[];
+
+    final entries = await parsePlaylistImportFile(
+      bytes,
+      'list.csv',
+      onProgress: (current, _) => progress.add(current),
+      metadataLookup: (query, limit) async {
+        queries.add(query);
+        return [
+          {
+            'id': 'js-1',
+            'provider_id': 'jiosaavn',
+            'name': 'Chaleya',
+            'artists': 'Arijit Singh',
+            'album_name': 'Jawan',
+            'duration_ms': 200000,
+            'isrc': 'INH102300001',
+          },
+        ];
+      },
+    );
+
+    expect(queries, isNotEmpty);
+    expect(progress, [1]);
+    expect(entries.single.track.duration, 200);
+    expect(entries.single.track.isrc, 'INH102300001');
+    expect(entries.single.track.albumName, 'Jawan');
+  });
+
+  test('CSV imports stay bare when no metadata provider matches', () async {
+    final bytes = Uint8List.fromList(
+      utf8.encode(
+        'Track name,Artist name\n'
+        'Unknown Song,Unknown Artist\n',
+      ),
+    );
+
+    final entries = await parsePlaylistImportFile(
+      bytes,
+      'list.csv',
+      metadataLookup: (query, limit) async => <Map<String, dynamic>>[],
+    );
+
+    expect(entries.single.track.id, startsWith('csv_'));
+    expect(entries.single.track.duration, 0);
+  });
 
   test(
     'imports match paths, then title and artist, and keep the rest',

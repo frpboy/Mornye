@@ -7,8 +7,10 @@ import 'package:mornye/providers/library_collections_provider.dart';
 import 'package:mornye/services/library_database.dart';
 import 'package:mornye/services/playlist_sources.dart';
 import 'package:mornye/utils/logger.dart';
+import 'package:mornye/widgets/app_alert_dialog.dart';
 import 'package:mornye/widgets/app_bottom_sheet.dart';
 import 'package:mornye/widgets/app_icon.dart';
+import 'package:mornye/widgets/app_loading_indicator.dart';
 import 'package:mornye/widgets/animation_utils.dart';
 import 'package:mornye/widgets/app_snack_bar.dart';
 import 'package:mornye/widgets/error_card.dart';
@@ -127,10 +129,71 @@ Future<void> _importFile(BuildContext context, WidgetRef ref) async {
     );
     if (picked == null) return;
     fileName = picked.name;
-    entries = await parsePlaylistImportFile(
-      await picked.readAsBytes(),
-      fileName,
-    );
+
+    int currentProgress = 0;
+    int totalTracks = 0;
+    var enrichmentCancelled = false;
+    bool progressDialogVisible = false;
+    BuildContext? progressDialogContext;
+    StateSetter? setDialogState;
+
+    void closeProgressDialog() {
+      if (!progressDialogVisible) return;
+      setDialogState = null;
+      try {
+        if (progressDialogContext != null) {
+          Navigator.of(progressDialogContext!).pop();
+        }
+      } catch (_) {}
+      progressDialogVisible = false;
+      progressDialogContext = null;
+    }
+
+    void showProgressDialog() {
+      if (progressDialogVisible || !context.mounted) return;
+      progressDialogVisible = true;
+      showAppDialog<void>(
+        context: context,
+        useRootNavigator: false,
+        barrierDismissible: false,
+        builder: (dialogCtx) => StatefulBuilder(
+          builder: (dialogCtx, setState) {
+            progressDialogContext = dialogCtx;
+            setDialogState = setState;
+            return PlaylistImportProgressDialog(
+              current: currentProgress,
+              total: totalTracks,
+              onCancel: () {
+                enrichmentCancelled = true;
+                closeProgressDialog();
+              },
+            );
+          },
+        ),
+      ).then((_) {
+        progressDialogVisible = false;
+        progressDialogContext = null;
+      });
+    }
+
+    try {
+      entries = await parsePlaylistImportFile(
+        await picked.readAsBytes(),
+        fileName,
+        onProgress: (current, total) {
+          currentProgress = current;
+          totalTracks = total;
+          if (total > 0) {
+            showProgressDialog();
+          }
+          setDialogState?.call(() {});
+        },
+        isCancelled: () => enrichmentCancelled,
+      );
+    } finally {
+      // Never leave the progress dialog up after a failure.
+      closeProgressDialog();
+    }
   } catch (e) {
     _log.e('Failed to read playlist file: $e');
     if (context.mounted) {
@@ -161,6 +224,49 @@ Future<void> _importFile(BuildContext context, WidgetRef ref) async {
       l10n.playlistImportResult(result.addedCount, name, match.matched),
     ),
   );
+}
+
+/// Progress dialog shown while an imported playlist file is enriched with
+/// metadata providers. Mirrors the home-tab CSV import dialog, plus a cancel
+/// action: cancelling stops enrichment between tracks and the import
+/// continues with the tracks enriched so far (the rest stay bare).
+@visibleForTesting
+class PlaylistImportProgressDialog extends StatelessWidget {
+  const PlaylistImportProgressDialog({
+    super.key,
+    this.current = 0,
+    this.total = 0,
+    this.onCancel,
+  });
+
+  final int current;
+  final int total;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppAlertDialog(
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const AppLoadingIndicator(),
+          const SizedBox(height: 16),
+          Text(
+            total > 0
+                ? context.l10n.progressFetchingMetadata(current, total)
+                : context.l10n.progressReadingCsv,
+          ),
+        ],
+      ),
+      actions: [
+        if (onCancel != null)
+          AppDialogAction(
+            onPressed: onCancel,
+            child: Text(context.l10n.playlistImportSkipFetching),
+          ),
+      ],
+    );
+  }
 }
 
 class _FolderList extends StatelessWidget {

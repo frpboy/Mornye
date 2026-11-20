@@ -80,13 +80,14 @@ class CsvImportService {
     return compute(_hydratePlaylistInBackground, rows);
   }
 
-  @visibleForTesting
   static Future<List<Track>> enrichTracksMetadata(
     List<Track> tracks, {
     void Function(int current, int total)? onProgress,
     Future<List<Map<String, dynamic>>> Function(String query, int limit)?
     lookup,
     int concurrency = 3,
+    Duration lookupTimeout = const Duration(seconds: 20),
+    bool Function()? isCancelled,
   }) async {
     if (tracks.isEmpty) return const [];
     final providerLookup =
@@ -108,16 +109,27 @@ class CsvImportService {
 
     Future<void> worker() async {
       while (true) {
+        if (isCancelled?.call() ?? false) return;
         final index = nextIndex++;
         if (index >= tracks.length) return;
         final track = tracks[index];
-        results[index] = await _enrichTrack(track, providerLookup);
+        results[index] = await _enrichTrack(
+          track,
+          providerLookup,
+          lookupTimeout,
+          isCancelled,
+        );
         completed++;
         onProgress?.call(completed, tracks.length);
       }
     }
 
     await Future.wait(List.generate(workerCount, (_) => worker()));
+    // Cancelled (or otherwise unprocessed) slots keep their bare tracks so a
+    // partial enrichment still returns the full import.
+    for (var i = 0; i < tracks.length; i++) {
+      results[i] ??= tracks[i];
+    }
     final enriched = results.cast<Track>();
     _log.i('Enrichment complete: ${enriched.length} tracks');
     return enriched;
@@ -126,6 +138,8 @@ class CsvImportService {
   static Future<Track> _enrichTrack(
     Track track,
     Future<List<Map<String, dynamic>>> Function(String query, int limit) lookup,
+    Duration lookupTimeout,
+    bool Function()? isCancelled,
   ) async {
     if (track.coverUrl != null && track.duration > 0) return track;
 
@@ -133,16 +147,19 @@ class CsvImportService {
     final isrc = track.isrc?.trim().toUpperCase() ?? '';
     if (isrc.isNotEmpty) {
       try {
-        final candidates = await lookup(isrc, 5);
+        final candidates = await lookup(isrc, 5).timeout(lookupTimeout);
         selected = _bestCandidate(track, candidates, requireExactIsrc: true);
       } catch (e) {
         _log.w('ISRC provider lookup failed for ${track.name}: $e');
       }
     }
 
-    if (selected == null) {
+    if (selected == null && !(isCancelled?.call() ?? false)) {
       try {
-        final candidates = await lookup('${track.artistName} ${track.name}', 5);
+        final candidates = await lookup(
+          '${track.artistName} ${track.name}',
+          5,
+        ).timeout(lookupTimeout);
         selected = _bestCandidate(track, candidates);
       } catch (e) {
         _log.w('Metadata provider lookup failed for ${track.name}: $e');
