@@ -1,5 +1,14 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
+// Recognize native paths before URI parsing: a Windows drive letter is not
+// an artwork URI scheme. Check both styles so persisted paths are classified
+// consistently, without admitting drive-relative paths such as D:music.flac.
+bool _isAbsoluteLocalPath(String value) =>
+    p.posix.isAbsolute(value) ||
+    (p.windows.isAbsolute(value) && !p.windows.isRootRelative(value));
+
 /// Use a local file's embedded cover when its thumbnail is missing or only an
 /// online cover is known, so playback offline still shows the file's own art.
 /// Callers run this separately from preparing audio and discard stale results.
@@ -8,17 +17,21 @@ Future<String?> resolveEmbeddedArtworkUri(
   String? artwork, {
   required Future<String?> Function(String) extract,
 }) async {
-  if (!source.startsWith('content://') && !source.startsWith('/')) {
+  if (!source.startsWith('content://') && !_isAbsoluteLocalPath(source)) {
     return null;
   }
   try {
     if (artwork != null && artwork.isNotEmpty) {
-      final uri = Uri.parse(artwork);
-      final remote = uri.scheme == 'http' || uri.scheme == 'https';
-      if (uri.hasScheme && uri.scheme != 'file' && !remote) return null;
-      if (!remote) {
-        final path = uri.scheme == 'file' ? uri.toFilePath() : artwork;
-        if (await File(path).exists()) return null;
+      if (_isAbsoluteLocalPath(artwork)) {
+        if (await File(artwork).exists()) return null;
+      } else {
+        final uri = Uri.parse(artwork);
+        final remote = uri.scheme == 'http' || uri.scheme == 'https';
+        if (uri.hasScheme && uri.scheme != 'file' && !remote) return null;
+        if (!remote) {
+          final path = uri.scheme == 'file' ? uri.toFilePath() : artwork;
+          if (await File(path).exists()) return null;
+        }
       }
     }
     final cover = await extract(source);
@@ -39,10 +52,14 @@ Future<String?> resolveRestoredArtworkUri(
       fileExists?.call(path) ?? File(path).exists();
   try {
     if (artwork != null && artwork.isNotEmpty) {
-      final uri = Uri.parse(artwork);
-      if (uri.hasScheme && uri.scheme != 'file') return artwork;
-      final path = uri.scheme == 'file' ? uri.toFilePath() : artwork;
-      if (await exists(path)) return artwork;
+      if (_isAbsoluteLocalPath(artwork)) {
+        if (await exists(artwork)) return artwork;
+      } else {
+        final uri = Uri.parse(artwork);
+        if (uri.hasScheme && uri.scheme != 'file') return artwork;
+        final path = uri.scheme == 'file' ? uri.toFilePath() : artwork;
+        if (await exists(path)) return artwork;
+      }
     }
     final cover = await loadLibraryCoverPath();
     if (cover == null || cover.isEmpty) return artwork;
