@@ -97,9 +97,18 @@ class _DesktopNowPlayingState extends ConsumerState<DesktopNowPlaying> {
 
   Widget _buildPlayer(BuildContext context, MediaItem? mediaItem) {
     final mornye = context.isMornye;
-    final theme = mornye
+    final baseTheme = mornye
         ? MornyeTheme.fromContext(context, brightness: Brightness.dark)
         : Theme.of(context);
+    // The cover-derived background is darker behind the controls. Use a light
+    // secondary foreground here, not the app's gray-on-black subtitle colour.
+    final theme = mornye
+        ? baseTheme.copyWith(
+            colorScheme: baseTheme.colorScheme.copyWith(
+              onSurfaceVariant: const Color(0xffe6e6eb),
+            ),
+          )
+        : baseTheme;
     final colorScheme = theme.colorScheme;
     return Theme(
       data: theme,
@@ -109,7 +118,10 @@ class _DesktopNowPlayingState extends ConsumerState<DesktopNowPlaying> {
           fit: StackFit.expand,
           children: [
             if (mornye)
-              MornyePlayerBackground(artUri: mediaItem?.artUri)
+              MornyePlayerBackground(
+                artUri: mediaItem?.artUri,
+                expandedSurface: true,
+              )
             else if (mediaItem != null)
               MaterialPlayerBackdrop(
                 mediaItem: mediaItem,
