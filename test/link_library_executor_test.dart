@@ -23,9 +23,13 @@ class _Settings extends SettingsNotifier {
   Future<void> syncLyricsSettingsToBackend({AppSettings? settings}) async {}
 }
 
+class _HistoryProbe {
+  String? savedTitle;
+}
+
 class _History extends DownloadHistoryNotifier {
   final removed = <String>[];
-  String? savedTitle;
+  final probe = _HistoryProbe();
   @override
   DownloadHistoryState build() => DownloadHistoryState();
   @override
@@ -50,7 +54,7 @@ class _History extends DownloadHistoryNotifier {
     bool? hasLyrics,
     int? lyricsMetadataScanVersion,
   }) async {
-    savedTitle = trackName;
+    probe.savedTitle = trackName;
   }
 
   @override
@@ -229,7 +233,7 @@ void main() {
       addTearDown(
         SourceMetadataEvents.instance.subscribe((source) async {
           expect(source, audio.path);
-          published.add(history.savedTitle);
+          published.add(history.probe.savedTitle);
         }),
       );
       var fail = false;
@@ -289,7 +293,7 @@ void main() {
         {'error': 'metadata_failed'},
       );
       expect(published, ['Edited title']);
-      expect(history.savedTitle, 'Edited title');
+      expect(history.probe.savedTitle, 'Edited title');
     },
   );
 
