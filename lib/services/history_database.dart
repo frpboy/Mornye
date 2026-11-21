@@ -1,4 +1,6 @@
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
@@ -105,7 +107,7 @@ class HistoryDatabase {
   // the existing schema migration. The background native writer shares
   // history.db and must accept the same schema contract and
   // user_version without depending on FTS5.
-  static const int schemaVersion = 15;
+  static const int schemaVersion = 18;
   static const String searchFtsTable = 'history_search_fts';
   static final HistoryDatabase instance = HistoryDatabase._init();
   static final sqlite.SingleFlightInitializer<Database> _database =
@@ -116,6 +118,42 @@ class HistoryDatabase {
 
   HistoryDatabase._init();
 
+  /// History writes race the native backend's own history.db writers and
+  /// library merges on the attached Library connection. On desktop the
+  /// connection reports BUSY from BEGIN IMMEDIATE almost immediately even
+  /// with `PRAGMA busy_timeout` set, so the retry schedule must span several
+  /// seconds of real time to cover a competing merge. Total budget ~12s;
+  /// persistent locks still surface after the last delay.
+  static const List<Duration> _writeRetryDelays = [
+    Duration(milliseconds: 100),
+    Duration(milliseconds: 200),
+    Duration(milliseconds: 400),
+    Duration(milliseconds: 800),
+    Duration(milliseconds: 1600),
+    Duration(milliseconds: 3200),
+    Duration(milliseconds: 4000),
+  ];
+
+  static Future<T> _writeTransaction<T>(
+    Database db,
+    Future<T> Function(Transaction txn) action,
+  ) => sqlite.transactionWithBusyRetry(
+    db,
+    action,
+    retryDelays: _writeRetryDelays,
+  );
+
+  /// Test seam: replaces the lazily opened connection with [db] so host
+  /// tests can drive real contention against a temporary file. Passing null
+  /// restores the production opener for the next access.
+  @visibleForTesting
+  static void debugReplaceDatabaseForTest(Database? db) {
+    _database.reset();
+    if (db != null) {
+      _database.getOrCreate(() async => db);
+    }
+  }
+
   Future<Database> get database {
     return _database.getOrCreate(() async {
       final db = await sqlite.openAppDatabase(
@@ -125,6 +163,15 @@ class HistoryDatabase {
           _searchFtsAvailable = await HistorySchema.create(db, version);
         },
         onUpgrade: HistorySchema.upgrade,
+        onOpen: (db) async {
+          if (Platform.isWindows) {
+            await sqlite.repairWindowsPathKeysOnOpen(
+              db,
+              'history',
+              'history_path_keys',
+            );
+          }
+        },
       );
       // onCreate normally initializes this derived index. Retry once after
       // opening an existing database in case an earlier setup was
@@ -280,7 +327,7 @@ class HistoryDatabase {
 
   Future<void> upsert(Map<String, dynamic> json) async {
     final db = await database;
-    await db.transaction((txn) async {
+    await _writeTransaction(db, (txn) async {
       await txn.insert(
         'history',
         HistoryRowMapper.jsonToDbRow(json),
@@ -299,7 +346,7 @@ class HistoryDatabase {
   Future<void> upsertBatch(List<Map<String, dynamic>> items) async {
     if (items.isEmpty) return;
     final db = await database;
-    await db.transaction((txn) async {
+    await _writeTransaction(db, (txn) async {
       final batch = txn.batch();
       for (final json in items) {
         batch.insert(
@@ -322,7 +369,8 @@ class HistoryDatabase {
   ) async {
     if (items.isEmpty) return const {};
     final db = await database;
-    return db.transaction(
+    return _writeTransaction(
+      db,
       (txn) => updateExistingHistoryRows(
         txn,
         items.map(HistoryRowMapper.jsonToDbRow),
@@ -424,6 +472,11 @@ class HistoryDatabase {
 
   Future<List<String>> getPhysicalFileIds(Iterable<String> filePaths) async =>
       sqlite.findPhysicalFileRowIds(await database, 'history', filePaths);
+
+  /// Origin aliases are deliberately separate from physical path keys:
+  /// deleting a server file must never delete its independent offline copy.
+  Future<Map<String, dynamic>?> findOfflineCopy(String origin) async =>
+      _firstRow(await database, 'origin_file_path = ?', [origin]);
 
   Future<Map<String, dynamic>?> getBySpotifyId(String spotifyId) async =>
       _firstRow(await database, 'spotify_id = ?', [spotifyId]);
@@ -580,7 +633,7 @@ class HistoryDatabase {
 
   Future<void> clearAll() async {
     final db = await database;
-    await db.transaction((txn) async {
+    await _writeTransaction(db, (txn) async {
       await txn.delete('history_path_keys');
       await txn.delete('history');
     });
@@ -656,7 +709,7 @@ class HistoryDatabase {
         values['sample_rate'] = newSampleRate;
       }
     }
-    return db.transaction((txn) async {
+    return _writeTransaction(db, (txn) async {
       final changed = await txn.update(
         'history',
         values,
@@ -706,7 +759,7 @@ class HistoryDatabase {
     List<Map<String, dynamic>> entries,
   ) async {
     final db = await database;
-    return db.transaction((txn) async {
+    return _writeTransaction(db, (txn) async {
       final deletedIds = <String>[];
       for (final entry in entries) {
         final id = entry['id'] as String;
@@ -734,7 +787,7 @@ class HistoryDatabase {
     if (ids.isEmpty) return 0;
 
     final db = await database;
-    final totalDeleted = await db.transaction((txn) async {
+    final totalDeleted = await _writeTransaction(db, (txn) async {
       var deleted = 0;
       const chunkSize = 500;
       for (var i = 0; i < ids.length; i += chunkSize) {

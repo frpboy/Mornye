@@ -139,12 +139,25 @@ String normalizeLookupText(String? value) {
 /// Retry only lock contention while acquiring BEGIN, before the callback runs.
 /// History download writers can also lock transactions on an attached Library
 /// connection. Never replay a body or COMMIT failure: it may have side effects
-/// or an already durable result. Persistent locks still surface after 3 attempts.
+/// or an already durable result. Persistent locks still surface after the
+/// retries are exhausted.
+///
+/// [retryDelays] holds the wait before each retry; the default preserves the
+/// original two quick retries. Desktop (sqflite_ffi) connections surface
+/// SQLITE_BUSY from `BEGIN IMMEDIATE` almost immediately even with
+/// `PRAGMA busy_timeout` set (verified: the pragma reads back 5000 ms yet the
+/// begin fails in ~60 ms under a cross-process write lock), so callers whose
+/// writes race the native backend's history.db / attached-Library writers
+/// should pass a schedule that spans several seconds.
 Future<T> transactionWithBusyRetry<T>(
   Database db,
   Future<T> Function(Transaction txn) action, {
   bool? exclusive,
+  List<Duration>? retryDelays,
 }) async {
+  final delays =
+      retryDelays ??
+      const [Duration(milliseconds: 100), Duration(milliseconds: 200)];
   for (var attempt = 0; ; attempt++) {
     var entered = false;
     try {
@@ -159,9 +172,11 @@ Future<T> transactionWithBusyRetry<T>(
           ? (code & 0xff) == 5 || (code & 0xff) == 6
           : message.contains('database is locked') ||
                 message.contains('database table is locked');
-      if (entered || !busy || attempt >= 2) rethrow;
-      _log.w('Database busy before transaction; retry ${attempt + 1}/2');
-      await Future<void>.delayed(Duration(milliseconds: 100 << attempt));
+      if (entered || !busy || attempt >= delays.length) rethrow;
+      _log.w(
+        'Database busy before transaction; retry ${attempt + 1}/${delays.length}',
+      );
+      await Future<void>.delayed(delays[attempt]);
     }
   }
 }
@@ -387,6 +402,72 @@ Future<void> createPathKeyTable(DatabaseExecutor db, String table) async {
   await db.execute(
     'CREATE INDEX IF NOT EXISTS idx_${table}_key ON $table(path_key)',
   );
+}
+
+/// Adds the plain-path keys that rows stored with a Windows verbatim path
+/// (`\\?\C:\…`, `\\?\UNC\server\…`) lacked before those keys existed.
+/// Without them a scanned file and the download of the same file look like
+/// two files. Rows that already have their plain key cost one indexed probe.
+/// Returns the number of rows repaired.
+Future<int> repairWindowsVerbatimPathKeys(
+  Database db,
+  String sourceTable,
+  String keyTable,
+) async {
+  const path = 's.file_path';
+  const isUnc =
+      "upper(substr($path, 5, 3)) = 'UNC' "
+      'AND substr($path, 8, 1) = substr($path, 1, 1)';
+  final rows = await db.rawQuery(
+    'SELECT s.id, s.file_path FROM $sourceTable s '
+    r"WHERE substr(s.file_path, 1, 4) IN ('\\?\', '//?/') "
+    "AND (substr($path, 6, 1) = ':' OR ($isUnc)) "
+    'AND NOT EXISTS ('
+    '  SELECT 1 FROM $keyTable k WHERE k.item_id = s.id AND k.path_key = '
+    '    CASE WHEN $isUnc '
+    '      THEN substr($path, 1, 2) || substr($path, 9) '
+    '      ELSE substr($path, 5) END'
+    ')',
+  );
+  if (rows.isEmpty) return 0;
+  const pageSize = 250;
+  await db.transaction((txn) async {
+    for (var start = 0; start < rows.length; start += pageSize) {
+      final batch = txn.batch();
+      for (final row in rows.skip(start).take(pageSize)) {
+        putPathKeysInBatch(
+          batch,
+          keyTable,
+          row['id'] as String,
+          row['file_path'] as String?,
+          replaceExisting: false,
+        );
+      }
+      await batch.commit(noResult: true);
+    }
+  });
+  return rows.length;
+}
+
+/// [repairWindowsVerbatimPathKeys] for a database being opened. A failed
+/// repair is logged and leaves the database usable.
+Future<void> repairWindowsPathKeysOnOpen(
+  Database db,
+  String sourceTable,
+  String keyTable,
+) async {
+  try {
+    final repaired = await repairWindowsVerbatimPathKeys(
+      db,
+      sourceTable,
+      keyTable,
+    );
+    if (repaired > 0) {
+      _log.i('Added plain Windows path keys to $repaired $sourceTable rows');
+    }
+  } catch (error) {
+    _log.w('Could not repair Windows path keys in $sourceTable: $error');
+  }
 }
 
 /// Finds every index entry for these physical files, including SAF aliases.
@@ -648,7 +729,10 @@ class LibraryShadowSnapshot {
                 ..execute('DROP TABLE IF EXISTS temp.library_shadowed_next')
                 ..execute(
                   'CREATE TEMP TABLE library_shadowed_next AS '
-                  '${_shadowPairsSql(fromHistory: historyRows * 2 < libraryRows)}',
+                  '${_shadowPairsSql(fromHistory: historyRows * 2 < libraryRows)} '
+                  'UNION SELECT l.id AS item_id, h.id AS history_id '
+                  'FROM history_db.history h JOIN library l '
+                  'ON l.file_path = h.origin_file_path',
                 )
                 ..execute('DROP TABLE IF EXISTS $libraryShadowTable')
                 ..execute(
