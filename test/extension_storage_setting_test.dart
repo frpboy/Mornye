@@ -112,7 +112,11 @@ void main() {
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
       await tester.pump();
-      if (row.evaluate().isNotEmpty &&
+      // An invalidated provider keeps its previous value while it reloads,
+      // so the switch can look enabled with a stale value. Wait for the
+      // reload to finish before trusting it.
+      if (!container.read(unsecuredExtensionStorageProvider).isLoading &&
+          row.evaluate().isNotEmpty &&
           tester.widget<SettingsSwitchItem>(row).enabled) {
         await tester.pumpAndSettle();
         return;
