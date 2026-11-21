@@ -35,9 +35,13 @@ final _entries = [
     ),
 ];
 
-class _Collections extends LibraryCollectionsNotifier {
+class _CollectionsProbe {
   int writes = 0;
   bool failSave = false;
+}
+
+class _Collections extends LibraryCollectionsNotifier {
+  final probe = _CollectionsProbe();
 
   @override
   LibraryCollectionsState build() => LibraryCollectionsState(
@@ -60,8 +64,8 @@ class _Collections extends LibraryCollectionsNotifier {
 
   @override
   Future<bool> reorderPlaylistTracks(String id, List<String> keys) async {
-    if (failSave) throw StateError('Storage unavailable');
-    writes++;
+    if (probe.failSave) throw StateError('Storage unavailable');
+    probe.writes++;
     final playlist = state.playlistById(id)!;
     final byKey = {for (final entry in playlist.tracks) entry.key: entry};
     state = state.copyWith(
@@ -77,8 +81,8 @@ class _Collections extends LibraryCollectionsNotifier {
     LibraryTracksFolderMode mode,
     List<String> keys,
   ) async {
-    if (failSave) throw StateError('Storage unavailable');
-    writes++;
+    if (probe.failSave) throw StateError('Storage unavailable');
+    probe.writes++;
     final byKey = {for (final entry in _entries) entry.key: entry};
     final entries = [for (final key in keys) byKey[key]!];
     state = mode == LibraryTracksFolderMode.loved
@@ -211,12 +215,12 @@ void main() {
                 desktop: desktop,
                 holdRow: !desktop,
               );
-              expect(collections.writes, 0);
+              expect(collections.probe.writes, 0);
               await tester.tap(
                 find.byKey(const ValueKey('collection-order-save')),
               );
               await tester.pumpAndSettle();
-              expect(collections.writes, 1);
+              expect(collections.probe.writes, 1);
               expect(find.byType(CollectionReorderSliver), findsNothing);
               expect(find.text('Song order saved'), findsOneWidget);
               expect(tester.takeException(), isNull);
@@ -238,14 +242,14 @@ void main() {
     await tester.tap(find.text('Discard'));
     await tester.pumpAndSettle();
     expect(find.byType(CollectionReorderSliver), findsNothing);
-    expect(collections.writes, 0);
+    expect(collections.probe.writes, 0);
   });
 
   testWidgets('failed save keeps the draft available for retry', (
     tester,
   ) async {
     final collections = await open(tester);
-    collections.failSave = true;
+    collections.probe.failSave = true;
     await moveFirstToLast(tester);
     await tester.tap(find.byKey(const ValueKey('collection-order-save')));
     await tester.pumpAndSettle();
@@ -254,7 +258,7 @@ void main() {
       find.text('Could not save the song order. Try again.'),
       findsOneWidget,
     );
-    expect(collections.writes, 0);
+    expect(collections.probe.writes, 0);
   });
 
   testWidgets('cancelling a drag leaves previous edits ready to save', (
@@ -287,6 +291,6 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('collection-order-save')));
     await tester.pumpAndSettle();
-    expect(collections.writes, 1);
+    expect(collections.probe.writes, 1);
   });
 }
