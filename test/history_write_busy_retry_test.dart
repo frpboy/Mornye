@@ -60,27 +60,30 @@ void main() {
     await root.delete(recursive: true);
   });
 
-  test('upsert outlives a native write lock held past one busy timeout', () async {
-    // A competing process takes the write lock for longer than the 5s
-    // busy_timeout, then releases it, like a native library merge finishing.
-    await native.execute('BEGIN IMMEDIATE');
-    final release = Future<void>.delayed(
-      const Duration(seconds: 6),
-      () => native.execute('COMMIT'),
-    );
+  test(
+    'upsert outlives a native write lock held past one busy timeout',
+    () async {
+      // A competing process takes the write lock for longer than the 5s
+      // busy_timeout, then releases it, like a native library merge finishing.
+      await native.execute('BEGIN IMMEDIATE');
+      final release = Future<void>.delayed(
+        const Duration(seconds: 6),
+        () => native.execute('COMMIT'),
+      );
 
-    final watch = Stopwatch()..start();
-    await HistoryDatabase.instance.upsert(historyJson('id-1'));
-    watch.stop();
-    await release;
+      final watch = Stopwatch()..start();
+      await HistoryDatabase.instance.upsert(historyJson('id-1'));
+      watch.stop();
+      await release;
 
-    expect(
-      watch.elapsed,
-      greaterThan(const Duration(seconds: 5)),
-      reason: 'the write must retry past the first busy timeout, not fail',
-    );
-    expect(await HistoryDatabase.instance.getById('id-1'), isNotNull);
-  });
+      expect(
+        watch.elapsed,
+        greaterThan(const Duration(seconds: 5)),
+        reason: 'the write must retry past the first busy timeout, not fail',
+      );
+      expect(await HistoryDatabase.instance.getById('id-1'), isNotNull);
+    },
+  );
 
   test('upsertBatch outlives the same contention', () async {
     await native.execute('BEGIN IMMEDIATE');
